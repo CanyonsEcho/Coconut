@@ -127,8 +127,7 @@ Result<void> RmlBackend::Initialize(
         return Result<void>::Err("RmlGL3::Initialize failed: " + glErr);
     }
 
-    impl_->systemInterface = std::make_unique<SystemInterface_SDL>();
-    impl_->systemInterface->SetWindow(window_);
+    impl_->systemInterface = std::make_unique<SystemInterface_SDL>(window_);
     impl_->renderInterface = std::make_unique<CoconutRenderInterface>();
     impl_->fileInterface = std::make_unique<CoconutFileInterface>();
 
