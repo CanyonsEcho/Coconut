@@ -5,9 +5,7 @@
 #include <RmlUi_Renderer_GL3.h>
 #include <RmlUi/Debugger.h>
 
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
 #if defined(COCONUT_USE_GLES3)
@@ -18,7 +16,10 @@
 #include <RmlUi_Include_GL3.h>
 #endif
 
+#include <cstring>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace coconut::ui {
@@ -45,9 +46,90 @@ public:
     }
 };
 
+struct DynamicTexEntry {
+    u32 glId = 0;
+    int width = 0;
+    int height = 0;
+    bool owned = false;
+};
+
 class CoconutRenderInterface : public RenderInterface_GL3 {
 public:
+    ~CoconutRenderInterface() override {
+        for (auto& [k, entry] : dynamicTextures_) {
+            if (entry.owned && entry.glId != 0) {
+                glDeleteTextures(1, &entry.glId);
+            }
+        }
+    }
+
+    void SetDynamicRGBA(const std::string& key, int w, int h, ByteSpan rgba) {
+        if (w <= 0 || h <= 0 || rgba.size() < static_cast<size_t>(w) * h * 4) return;
+
+        // Premultiply alpha for RmlUi GL3 compositing
+        std::vector<u8> premul(static_cast<size_t>(w) * h * 4);
+        for (size_t i = 0; i < premul.size(); i += 4) {
+            float a = rgba[i + 3] / 255.0f;
+            premul[i + 0] = static_cast<u8>(rgba[i + 0] * a);
+            premul[i + 1] = static_cast<u8>(rgba[i + 1] * a);
+            premul[i + 2] = static_cast<u8>(rgba[i + 2] * a);
+            premul[i + 3] = rgba[i + 3];
+        }
+
+        auto& entry = dynamicTextures_[key];
+        if (!entry.owned || entry.glId == 0) {
+            glGenTextures(1, &entry.glId);
+            entry.owned = true;
+        }
+        entry.width = w;
+        entry.height = h;
+
+        glBindTexture(GL_TEXTURE_2D, entry.glId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, premul.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    void SetExternalGL(const std::string& key, u32 glTexId, int w, int h) {
+        auto it = dynamicTextures_.find(key);
+        if (it != dynamicTextures_.end() && it->second.owned && it->second.glId != 0) {
+            glDeleteTextures(1, &it->second.glId);
+        }
+        dynamicTextures_[key] = DynamicTexEntry{glTexId, w, h, false};
+    }
+
+    void ClearDynamic(const std::string& key) {
+        auto it = dynamicTextures_.find(key);
+        if (it != dynamicTextures_.end()) {
+            if (it->second.owned && it->second.glId != 0) {
+                glDeleteTextures(1, &it->second.glId);
+            }
+            dynamicTextures_.erase(it);
+        }
+    }
+
     Rml::TextureHandle LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source) override {
+        // Resolve dynamic live textures ("coconut://scene_viewport" or "...coconut://scene_viewport?v=3")
+        const std::string marker = "coconut://";
+        size_t pos = source.find(marker);
+        if (pos != std::string::npos) {
+            std::string key = source.substr(pos + marker.size());
+            size_t q = key.find('?');
+            if (q != std::string::npos) key = key.substr(0, q);
+            auto it = dynamicTextures_.find(key);
+            if (it != dynamicTextures_.end() && it->second.glId != 0) {
+                texture_dimensions.x = it->second.width;
+                texture_dimensions.y = it->second.height;
+                externalHandles_.insert(static_cast<Rml::TextureHandle>(it->second.glId));
+                return static_cast<Rml::TextureHandle>(it->second.glId);
+            }
+            return {};
+        }
+
         int w = 0, h = 0, ch = 0;
         stbi_uc* pixels = stbi_load(source.c_str(), &w, &h, &ch, 4);
         if (!pixels) {
@@ -55,7 +137,6 @@ public:
         }
         texture_dimensions.x = w;
         texture_dimensions.y = h;
-        // Premultiply alpha for RmlUi GL3 renderer
         size_t total = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
         for (size_t i = 0; i < total; i += 4) {
             float a = pixels[i + 3] / 255.0f;
@@ -67,6 +148,17 @@ public:
         stbi_image_free(pixels);
         return handle;
     }
+
+    void ReleaseTexture(Rml::TextureHandle texture_handle) override {
+        if (externalHandles_.contains(texture_handle)) {
+            return; // Owned by SceneRenderer or dynamicTextures_
+        }
+        RenderInterface_GL3::ReleaseTexture(texture_handle);
+    }
+
+private:
+    std::unordered_map<std::string, DynamicTexEntry> dynamicTextures_;
+    std::unordered_set<Rml::TextureHandle> externalHandles_;
 };
 
 } // namespace
@@ -139,23 +231,19 @@ Result<void> RmlBackend::Initialize(
         return Result<void>::Err("Rml::Initialise failed");
     }
 
-    // Load bundled OFL fonts (IBM Plex Sans + JetBrains Mono)
+    // Load clean modern serif font (PT Serif Regular & Bold)
     auto fontDir = resourceDir / "fonts";
-    const char* fonts[] = {
-        "IBMPlexSans-Regular.ttf",
-        "IBMPlexSans-Medium.ttf",
-        "IBMPlexSans-SemiBold.ttf",
-        "IBMPlexSans-Bold.ttf",
-        "JetBrainsMono-Regular.ttf",
-        "JetBrainsMono-Bold.ttf"
-    };
-    for (const char* f : fonts) {
-        auto fp = fontDir / f;
-        if (std::filesystem::exists(fp)) {
-            Rml::LoadFontFace(fp.string());
-        } else {
-            COCO_LOG_WARN("UI", "Font not found: " + fp.string());
-        }
+    auto serifReg = fontDir / "ModernSerif-Regular.ttf";
+    auto serifBold = fontDir / "ModernSerif-Bold.ttf";
+    if (std::filesystem::exists(serifReg)) {
+        Rml::LoadFontFace(serifReg.string(), true);
+    } else {
+        COCO_LOG_WARN("UI", "Font not found: " + serifReg.string());
+    }
+    if (std::filesystem::exists(serifBold)) {
+        Rml::LoadFontFace(serifBold.string(), false);
+    } else {
+        COCO_LOG_WARN("UI", "Font not found: " + serifBold.string());
     }
 
     int pixW = width_, pixH = height_;
@@ -175,6 +263,24 @@ Result<void> RmlBackend::Initialize(
 
     initialized_ = true;
     return Result<void>::Ok();
+}
+
+void RmlBackend::SetDynamicRGBAImage(const std::string& key, int width, int height, ByteSpan rgbaPixels) {
+    if (impl_ && impl_->renderInterface) {
+        impl_->renderInterface->SetDynamicRGBA(key, width, height, rgbaPixels);
+    }
+}
+
+void RmlBackend::SetExternalGLTexture(const std::string& key, u32 glTexId, int width, int height) {
+    if (impl_ && impl_->renderInterface) {
+        impl_->renderInterface->SetExternalGL(key, glTexId, width, height);
+    }
+}
+
+void RmlBackend::ClearDynamicImage(const std::string& key) {
+    if (impl_ && impl_->renderInterface) {
+        impl_->renderInterface->ClearDynamic(key);
+    }
 }
 
 bool RmlBackend::PollEvents(const std::function<bool(const SDL_Event&)>& customHandler) {
@@ -207,7 +313,7 @@ bool RmlBackend::PollEvents(const std::function<bool(const SDL_Event&)>& customH
 void RmlBackend::BeginFrame() {
     if (!initialized_) return;
     glViewport(0, 0, width_, height_);
-    glClearColor(0.075f, 0.086f, 0.102f, 1.0f);
+    glClearColor(0.071f, 0.071f, 0.078f, 1.0f); // Deep dark gray #121214
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
@@ -232,7 +338,6 @@ Result<void> RmlBackend::CaptureScreenshot(const std::filesystem::path& pngPath)
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, width_, height_, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
-    // Flip vertically from OpenGL bottom-left origin to top-left PNG
     std::vector<u8> flipped(pixels.size());
     size_t rowBytes = static_cast<size_t>(width_) * 4;
     for (int y = 0; y < height_; ++y) {

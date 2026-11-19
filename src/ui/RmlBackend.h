@@ -22,7 +22,13 @@ public:
     void RenderUI();
     void EndFrame();
 
-    // Capture the live rendered OpenGL/GLES framebuffer to a PNG file (for verification / screenshots).
+    // Update or create a dynamic in-memory RGBA texture accessible via <img src="coconut://<key>"/>
+    void SetDynamicRGBAImage(const std::string& key, int width, int height, ByteSpan rgbaPixels);
+    // Register an existing OpenGL/GLES texture ID (e.g. 3D scene FBO color attachment) for <img src="coconut://<key>"/>
+    void SetExternalGLTexture(const std::string& key, u32 glTexId, int width, int height);
+    void ClearDynamicImage(const std::string& key);
+
+    // Capture the live rendered OpenGL/GLES framebuffer to a PNG file.
     Result<void> CaptureScreenshot(const std::filesystem::path& pngPath);
 
     Rml::Context* Context() const { return context_; }

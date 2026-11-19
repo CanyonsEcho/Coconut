@@ -182,6 +182,18 @@ set(COCONUT_CORE_SOURCES
     src/core/Compression.cpp
     src/core/CommandHistory.cpp
     src/core/ProjectDatabase.cpp
+    src/unity/ClassIDs.cpp
+    src/unity/UnityFS.cpp
+    src/unity/TypeTree.cpp
+    src/unity/SerializedFile.cpp
+    src/unity/GameLoader.cpp
+    src/unity/SampleGameGenerator.cpp
+    src/assets/StbImpl.cpp
+    src/assets/TextureAsset.cpp
+    src/assets/MeshAsset.cpp
+    src/assets/AudioAsset.cpp
+    src/assets/MaterialAsset.cpp
+    src/assets/AssetManager.cpp
 )
 
 if(WIN32)
