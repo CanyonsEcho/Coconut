@@ -16,6 +16,8 @@
 #include "assets/MaterialAsset.h"
 #include "assets/AssetManager.h"
 #include "decompiler/DecompilerEngine.h"
+#include "scene/SceneDocument.h"
+#include "scene/GizmoMath.h"
 
 #include <cmath>
 #include <cstring>
@@ -317,6 +319,75 @@ void TestMonoAndIl2CppDecompiler() {
     std::filesystem::remove_all(tmpDir, ec);
 }
 
+void TestSceneEditingAndGizmos() {
+    auto tmpDir = std::filesystem::temp_directory_path() / "coconut_test_scene";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+
+    Expect(unity::SampleGameGenerator::GenerateMonoDemoGame(tmpDir).IsOk(), "Generate demo for scene tests");
+    auto loadRes = unity::GameLoader::Load(tmpDir);
+    Expect(loadRes.IsOk(), "Load demo for scene tests");
+
+    if (loadRes) {
+        auto& proj = loadRes.Value();
+        assets::AssetManager mgr;
+        mgr.IndexProject(proj);
+
+        scene::SceneDocument doc;
+        Expect(doc.LoadFromProject(proj, mgr).IsOk(), "SceneDocument::LoadFromProject");
+        Expect(doc.Nodes().size() == 13, "Scene has 13 GameObjects (Camera, Light, Floor, Tower+Beacon, 3x Crate+Lid, 2x Batched Pillars)");
+
+        int towerIdx = doc.FindNodeByName("WatchTower");
+        int beaconIdx = doc.FindNodeByName("BeaconCore");
+        Expect(towerIdx >= 0 && beaconIdx >= 0, "Found WatchTower and child BeaconCore");
+        if (towerIdx >= 0 && beaconIdx >= 0) {
+            Expect(doc.Nodes()[static_cast<size_t>(beaconIdx)].parentIndex == towerIdx, "BeaconCore parented to WatchTower");
+            glm::mat4 beaconWorld = doc.WorldMatrix(static_cast<size_t>(beaconIdx));
+            Expect(std::fabs(beaconWorld[3].y - (1.6f + 2.25f)) < 1e-3f, "WorldMatrix composes parent+child transforms");
+
+            CommandHistory hist;
+            doc.SetTransform(static_cast<size_t>(towerIdx), {2.5f, 1.6f, -1.0f}, {0, 45.0f, 0}, {1, 1, 1}, &hist);
+            Expect(std::fabs(doc.Nodes()[static_cast<size_t>(towerIdx)].localPosition.x - 2.5f) < 1e-4f, "Scene transform edit");
+            hist.Undo();
+            Expect(std::fabs(doc.Nodes()[static_cast<size_t>(towerIdx)].localPosition.x - 0.0f) < 1e-4f, "Scene transform undo");
+            hist.Redo();
+            Expect(std::fabs(doc.Nodes()[static_cast<size_t>(towerIdx)].localPosition.x - 2.5f) < 1e-4f, "Scene transform redo");
+
+            auto syncRes = doc.SyncBackToSerializedFiles(proj);
+            Expect(syncRes.IsOk() && syncRes.Value() >= 1, "SyncBackToSerializedFiles updated Transform binary");
+        }
+
+        size_t createdIdx = doc.CreateGameObject("CustomProp", -1, 303, 403);
+        Expect(doc.Nodes().size() == 14 && doc.Nodes()[createdIdx].name == "CustomProp", "CreateGameObject");
+        size_t dupIdx = doc.DuplicateGameObject(createdIdx);
+        Expect(doc.Nodes().size() == 15 && doc.Nodes()[dupIdx].name == "CustomProp (Clone)", "DuplicateGameObject");
+        Expect(doc.ReparentGameObject(dupIdx, static_cast<i64>(createdIdx)), "ReparentGameObject");
+        Expect(doc.DeleteGameObject(dupIdx) && doc.Nodes().size() == 14, "DeleteGameObject");
+
+        auto yamlOut = tmpDir / "exported_level0.unity";
+        Expect(doc.ExportUnitySceneYaml(yamlOut).IsOk(), "ExportUnitySceneYaml");
+        auto yamlTxt = platform::ReadFileText(yamlOut);
+        Expect(yamlTxt.IsOk() && yamlTxt.Value().find("WatchTower") != std::string::npos &&
+                   yamlTxt.Value().find("m_StaticBatchInfo") != std::string::npos,
+               "Exported .unity YAML contains scene hierarchy & static batch metadata");
+    }
+
+    // Raycast & Gizmo math tests
+    scene::OrbitCamera cam;
+    cam.target = {0, 0, 0};
+    cam.yawDeg = 0.0f;
+    cam.pitchDeg = 0.0f;
+    cam.distance = 10.0f;
+    auto centerRay = cam.ScreenPointToRay(0.5f, 0.5f, 16.0f / 9.0f);
+    auto hit = scene::GizmoMath::IntersectRayAABB(centerRay, {-1, -1, -1}, {1, 1, 1});
+    Expect(hit.has_value() && std::fabs(*hit - 9.0f) < 0.05f, "OrbitCamera center ray hits origin AABB at distance 9");
+
+    scene::Ray xAxisRay{{1.0f, 0.05f, 5.0f}, {0.0f, 0.0f, -1.0f}};
+    Expect(scene::GizmoMath::PickAxisHandle(xAxisRay, {0, 0, 0}, 2.0f) == scene::GizmoAxis::X, "PickAxisHandle selects X axis");
+
+    std::filesystem::remove_all(tmpDir, ec);
+}
+
 } // namespace
 
 int main() {
@@ -326,6 +397,7 @@ int main() {
     TestCommandHistoryAndProjectDb();
     TestUnityParsersAndDemoGames();
     TestMonoAndIl2CppDecompiler();
+    TestSceneEditingAndGizmos();
 
     std::cout << "Coconut Core Tests: " << g_passed << " passed, " << g_failed << " failed.\n";
     return g_failed == 0 ? 0 : 1;

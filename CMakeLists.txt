@@ -199,6 +199,8 @@ set(COCONUT_CORE_SOURCES
     src/decompiler/Il2CppMetadata.cpp
     src/decompiler/NativeDisassembler.cpp
     src/decompiler/DecompilerEngine.cpp
+    src/scene/SceneDocument.cpp
+    src/scene/GizmoMath.cpp
 )
 
 if(WIN32)
@@ -260,6 +262,7 @@ if(COCONUT_BUILD_GUI)
 
     set(COCONUT_GUI_SOURCES
         src/main.cpp
+        src/scene/SceneRenderer.cpp
         src/ui/RmlBackend.cpp
         src/ui/SyntaxHighlighter.cpp
         src/ui/WorkbenchApp.cpp
