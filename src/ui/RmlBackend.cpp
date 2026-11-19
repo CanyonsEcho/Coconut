@@ -231,19 +231,19 @@ Result<void> RmlBackend::Initialize(
         return Result<void>::Err("Rml::Initialise failed");
     }
 
-    // Load clean modern serif font (PT Serif Regular & Bold)
+    // Load clean modern sans-serif font (PT Sans Regular & Bold)
     auto fontDir = resourceDir / "fonts";
-    auto serifReg = fontDir / "ModernSerif-Regular.ttf";
-    auto serifBold = fontDir / "ModernSerif-Bold.ttf";
-    if (std::filesystem::exists(serifReg)) {
-        Rml::LoadFontFace(serifReg.string(), true);
+    auto sansReg = fontDir / "CleanSans-Regular.ttf";
+    auto sansBold = fontDir / "CleanSans-Bold.ttf";
+    if (std::filesystem::exists(sansReg)) {
+        Rml::LoadFontFace(sansReg.string(), true);
     } else {
-        COCO_LOG_WARN("UI", "Font not found: " + serifReg.string());
+        COCO_LOG_WARN("UI", "Font not found: " + sansReg.string());
     }
-    if (std::filesystem::exists(serifBold)) {
-        Rml::LoadFontFace(serifBold.string(), false);
+    if (std::filesystem::exists(sansBold)) {
+        Rml::LoadFontFace(sansBold.string(), false);
     } else {
-        COCO_LOG_WARN("UI", "Font not found: " + serifBold.string());
+        COCO_LOG_WARN("UI", "Font not found: " + sansBold.string());
     }
 
     int pixW = width_, pixH = height_;

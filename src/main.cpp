@@ -10,6 +10,9 @@
 
 int main(int argc, char** argv) {
     std::filesystem::path screenshotPath;
+    std::filesystem::path initialGamePath;
+    std::string initialTab = "scene";
+    bool runExportOnBoot = false;
     bool smokeExit = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -17,6 +20,12 @@ int main(int argc, char** argv) {
         if (arg == "--capture-screenshot" && i + 1 < argc) {
             screenshotPath = argv[++i];
             smokeExit = true;
+        } else if (arg == "--tab" && i + 1 < argc) {
+            initialTab = argv[++i];
+        } else if (arg == "--open" && i + 1 < argc) {
+            initialGamePath = argv[++i];
+        } else if (arg == "--run-export") {
+            runExportOnBoot = true;
         } else if (arg == "--smoke-test") {
             smokeExit = true;
         }
@@ -33,10 +42,13 @@ int main(int argc, char** argv) {
     }
 
     coconut::ui::WorkbenchApp app;
-    auto appRes = app.Initialize(backend, resDir);
+    auto appRes = app.Initialize(backend, resDir, initialGamePath, initialTab);
     if (!appRes) {
         COCO_LOG_ERROR("Boot", appRes.Error());
         return 1;
+    }
+    if (runExportOnBoot) {
+        app.RunExportAndFixupPipeline();
     }
 
     auto prevTime = std::chrono::steady_clock::now();
@@ -54,7 +66,7 @@ int main(int argc, char** argv) {
         backend.RenderUI();
 
         ++framesRendered;
-        if (!screenshotPath.empty() && framesRendered == 3) {
+        if (!screenshotPath.empty() && framesRendered == 4) {
             auto cap = backend.CaptureScreenshot(screenshotPath);
             if (!cap) {
                 COCO_LOG_ERROR("Boot", cap.Error());
@@ -65,7 +77,7 @@ int main(int argc, char** argv) {
 
         backend.EndFrame();
 
-        if (smokeExit && framesRendered >= 4) {
+        if (smokeExit && framesRendered >= 5) {
             break;
         }
     }

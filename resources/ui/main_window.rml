@@ -5,32 +5,46 @@
 </head>
 <body data-model="workbench">
 <div id="app-shell">
+    <!-- Top Bar -->
     <div id="top-bar">
         <div class="brand-mark">COCONUT</div>
-        <button class="toolbar-btn primary">Open Game</button>
-        <button class="toolbar-btn">Load Demo</button>
-        <button class="toolbar-btn">Export Unity Project</button>
-        <button class="toolbar-btn">Run Fixup</button>
+        <button class="toolbar-btn" data-event-click="open_folder">Open Folder</button>
+        <button class="toolbar-btn" data-event-click="open_file">Open APK / File</button>
+        <button class="toolbar-btn" data-event-click="load_demo_mono">Mono Demo</button>
+        <button class="toolbar-btn" data-event-click="load_demo_il2cpp">IL2CPP APK</button>
+        <button class="toolbar-btn" data-event-click="undo">Undo</button>
+        <button class="toolbar-btn" data-event-click="redo">Redo</button>
+        <button class="toolbar-btn" data-event-click="save_all">Save</button>
+        <button class="toolbar-btn primary" data-event-click="set_center_tab('export')">Export &amp; Fixup</button>
         <div class="spacer"></div>
         <div class="badge badge-accent">{{ project_title }}</div>
         <div class="badge">Unity {{ unity_version }}</div>
-        <div class="badge badge-cyan">{{ backend_name }}</div>
+        <div class="badge badge-accent">{{ backend_name }}</div>
         <div class="badge">{{ platform_name }}</div>
     </div>
 
+    <!-- Main 3-Column Rounded Workbench -->
     <div id="workspace">
+        <!-- Left Dock: Scene Hierarchy & Ghidra Symbol Tree -->
         <div id="left-dock" class="dock-panel">
             <div class="tab-bar">
                 <div class="tab-btn" data-class-active="active_left_tab == 'hierarchy'" data-event-click="set_left_tab('hierarchy')">Hierarchy</div>
                 <div class="tab-btn" data-class-active="active_left_tab == 'symbols'" data-event-click="set_left_tab('symbols')">Symbols</div>
             </div>
-            <div class="panel-body">
-                <div class="empty-state">
-                    Load a Unity Mono/IL2CPP game build or click Load Demo to inspect GameObjects, assemblies, and symbols.
-                </div>
+            <div class="sub-toolbar" data-if="active_left_tab == 'hierarchy'">
+                <button class="toolbar-btn small primary" data-event-click="create_go">+ Cube</button>
+                <button class="toolbar-btn small" data-event-click="duplicate_go">Duplicate</button>
+                <button class="toolbar-btn small" data-event-click="delete_go">Delete</button>
+            </div>
+            <div class="panel-body" data-if="active_left_tab == 'hierarchy'">
+                <div id="hierarchy-tree"></div>
+            </div>
+            <div class="panel-body" data-if="active_left_tab == 'symbols'">
+                <div id="symbol-list"></div>
             </div>
         </div>
 
+        <!-- Center Stage + Bottom Dock -->
         <div id="center-column">
             <div id="center-stage">
                 <div class="tab-bar">
@@ -40,36 +54,178 @@
                     <div class="tab-btn" data-class-active="active_center_tab == 'hex'" data-event-click="set_center_tab('hex')">Hex Editor</div>
                     <div class="tab-btn" data-class-active="active_center_tab == 'export'" data-event-click="set_center_tab('export')">AssetRipper &amp; Fixup</div>
                 </div>
-                <div class="panel-body">
-                    <div class="empty-state">
-                        Coconut Workbench Ready — Scene Viewport, Ghidra-Style Mono/IL2CPP Decompiler, Hex Editor, and AssetRipper Fixup Pipeline.
+
+                <!-- Tab 1: 3D Scene View -->
+                <div class="stage-view" data-if="active_center_tab == 'scene'">
+                    <div class="sub-toolbar">
+                        <button class="toolbar-btn small" data-class-primary="gizmo_mode == 'Translate'" data-event-click="set_gizmo('translate')">Move (W)</button>
+                        <button class="toolbar-btn small" data-class-primary="gizmo_mode == 'Rotate'" data-event-click="set_gizmo('rotate')">Rotate (E)</button>
+                        <button class="toolbar-btn small" data-class-primary="gizmo_mode == 'Scale'" data-event-click="set_gizmo('scale')">Scale (R)</button>
+                        <div class="spacer"></div>
+                        <button class="toolbar-btn small" data-class-primary="shading_mode == 'Shaded'" data-event-click="set_shading('shaded')">Shaded</button>
+                        <button class="toolbar-btn small" data-class-primary="shading_mode == 'Wireframe'" data-event-click="set_shading('wireframe')">Wireframe</button>
+                        <button class="toolbar-btn small" data-class-primary="shading_mode == 'Normals'" data-event-click="set_shading('normals')">Normals</button>
+                        <button class="toolbar-btn small" data-event-click="toggle_grid">Grid</button>
+                        <button class="toolbar-btn small" data-event-click="focus_selected">Focus</button>
+                    </div>
+                    <div id="scene-viewport-wrap">
+                        <img id="scene-viewport-img" src="coconut://scene_viewport" />
+                    </div>
+                </div>
+
+                <!-- Tab 2: Ghidra-Style Dual Disassembly + C# Decompiler -->
+                <div class="stage-view" data-if="active_center_tab == 'decompiler'">
+                    <div class="sub-toolbar">
+                        <input class="text-input" type="text" data-value="rename_input" placeholder="Rename primary method in .coco DB..." />
+                        <button class="toolbar-btn small primary" data-event-click="rename_symbol">Rename Symbol</button>
+                        <button class="toolbar-btn small" data-event-click="export_dump_cs">Export dump.cs</button>
+                        <button class="toolbar-btn small" data-event-click="export_ghidra_json">Ghidra script.json</button>
+                    </div>
+                    <div class="dual-pane">
+                        <div class="code-pane">
+                            <div class="pane-caption">Disassembly Listing (CIL / ARM64 / x86-64)</div>
+                            <div class="code-scroll" id="disasm-view"></div>
+                        </div>
+                        <div class="code-pane">
+                            <div class="pane-caption">Decompiled C# Source</div>
+                            <div class="code-scroll" id="csharp-view"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Asset Preview & Editor -->
+                <div class="stage-view" data-if="active_center_tab == 'asset'">
+                    <div class="panel-body" id="asset-preview-panel"></div>
+                </div>
+
+                <!-- Tab 4: Ghidra-Style Hex Editor -->
+                <div class="stage-view" data-if="active_center_tab == 'hex'">
+                    <div class="sub-toolbar">
+                        <span class="field-label">Offset 0x</span>
+                        <input class="text-input" type="text" data-value="hex_offset_input" />
+                        <span class="field-label">Byte 0x</span>
+                        <input class="text-input" type="text" data-value="hex_byte_input" />
+                        <button class="toolbar-btn small primary" data-event-click="patch_hex_byte">Patch Byte</button>
+                    </div>
+                    <div class="panel-body" id="hex-view"></div>
+                </div>
+
+                <!-- Tab 5: AssetRipper & Automated Unity Project Fixup Pipeline -->
+                <div class="stage-view" data-if="active_center_tab == 'export'">
+                    <div class="export-grid">
+                        <div class="export-col">
+                                <div class="insp-card">
+                                    <div class="insp-card-title">Target Unity Project &amp; AssetRipper Backend</div>
+                                    <div class="insp-card-sub">{{ ripper_status }}</div>
+                                    <div class="field-row">
+                                        <span class="field-label">Unity</span>
+                                        <input class="text-input" type="text" data-value="target_unity_version" />
+                                    </div>
+                                    <div class="preview-toolbar">
+                                        <button class="toolbar-btn small" data-event-click="set_unity_ver_preset('2019.4.40f1')">2019.4 LTS</button>
+                                        <button class="toolbar-btn small" data-event-click="set_unity_ver_preset('2021.3.45f1')">2021.3 LTS</button>
+                                        <button class="toolbar-btn small" data-event-click="set_unity_ver_preset('2022.3.15f1')">2022.3 LTS</button>
+                                        <button class="toolbar-btn small" data-event-click="set_unity_ver_preset('6000.0.23f1')">Unity 6</button>
+                                    </div>
+                                </div>
+
+                                <div class="toggle-pill" data-class-on="opt_prefer_ripper" data-event-click="toggle_export_opt('ripper')">
+                                    <span>Use AssetRipper (--headless HTTP API) when available</span>
+                                    <span class="mini-tag">{{ opt_prefer_ripper ? 'ON' : 'OFF' }}</span>
+                                </div>
+                                <div class="toggle-pill" data-class-on="opt_decombine" data-event-click="toggle_export_opt('decombine')">
+                                    <span>Decombine Static-Batched Meshes to Local Space</span>
+                                    <span class="mini-tag">{{ opt_decombine ? 'ON' : 'OFF' }}</span>
+                                </div>
+                                <div class="toggle-pill" data-class-on="opt_prefabs" data-event-click="toggle_export_opt('prefabs')">
+                                    <span>Reconstruct Repeated GameObjects into .prefab Assets</span>
+                                    <span class="mini-tag">{{ opt_prefabs ? 'ON' : 'OFF' }}</span>
+                                </div>
+                                <div class="toggle-pill" data-class-on="opt_fix_build" data-event-click="toggle_export_opt('buildfix')">
+                                    <span>Auto-Fix C# Build Errors, Shaders &amp; UPM Packages</span>
+                                    <span class="mini-tag">{{ opt_fix_build ? 'ON' : 'OFF' }}</span>
+                                </div>
+
+                                <button class="toolbar-btn primary" style="margin-top: 8dp; padding: 10dp 14dp;" data-event-click="run_export_fixup">Decompile, Fix Up &amp; Export Unity Project</button>
+                                <div class="insp-card" style="margin-top: 8dp;">
+                                    <div class="insp-card-sub" id="export-summary-text">Ready to export.</div>
+                                </div>
+                            </div>
+
+                            <div class="export-col code-pane">
+                                <div class="pane-caption">Automated Fixup Report (COCONUT_FIXUP_REPORT.md)</div>
+                                <div class="code-scroll" id="fixup-report-view"></div>
+                            </div>
                     </div>
                 </div>
             </div>
 
+            <!-- Bottom Dock: Project Assets, Ghidra XRefs & Console -->
             <div id="bottom-dock">
                 <div class="tab-bar">
                     <div class="tab-btn" data-class-active="active_bottom_tab == 'assets'" data-event-click="set_bottom_tab('assets')">Project Assets</div>
                     <div class="tab-btn" data-class-active="active_bottom_tab == 'xrefs'" data-event-click="set_bottom_tab('xrefs')">XRefs</div>
                     <div class="tab-btn" data-class-active="active_bottom_tab == 'console'" data-event-click="set_bottom_tab('console')">Console</div>
+                    <div class="spacer"></div>
+                    <div data-if="active_bottom_tab == 'assets'" style="display: flex; gap: 4dp;">
+                        <button class="toolbar-btn small" data-event-click="filter_assets(-1)">All</button>
+                        <button class="toolbar-btn small" data-event-click="filter_assets(3)">Meshes</button>
+                        <button class="toolbar-btn small" data-event-click="filter_assets(4)">Textures</button>
+                        <button class="toolbar-btn small" data-event-click="filter_assets(5)">Materials</button>
+                        <button class="toolbar-btn small" data-event-click="filter_assets(7)">Audio</button>
+                        <button class="toolbar-btn small" data-event-click="filter_assets(8)">Text</button>
+                    </div>
                 </div>
-                <div class="panel-body">
-                    <div class="code-block" data-if="active_bottom_tab == 'console'">{{ console_text }}</div>
-                    <div class="empty-state" data-if="active_bottom_tab != 'console'">No project loaded yet.</div>
+                <div class="panel-body" data-if="active_bottom_tab == 'assets'">
+                    <div id="assets-list"></div>
+                </div>
+                <div class="panel-body" data-if="active_bottom_tab == 'xrefs'">
+                    <div id="xrefs-list"></div>
+                </div>
+                <div class="panel-body" data-if="active_bottom_tab == 'console'">
+                    <div class="code-block">{{ console_text }}</div>
                 </div>
             </div>
         </div>
 
+        <!-- Right Dock: Live Unity Inspector -->
         <div id="right-dock" class="dock-panel">
             <div class="tab-bar">
                 <div class="tab-btn active">Inspector</div>
             </div>
             <div class="panel-body">
-                <div class="empty-state">Select a GameObject, Asset, or Symbol to inspect and edit its properties.</div>
+                <div class="insp-card">
+                    <div class="insp-card-title">GameObject &amp; Transform</div>
+                    <div class="field-row">
+                        <span class="field-label">Name</span>
+                        <input class="text-input" type="text" data-value="insp_name" />
+                    </div>
+                    <div class="field-row">
+                        <span class="field-label">Pos</span>
+                        <input class="text-input" type="text" data-value="insp_px" />
+                        <input class="text-input" type="text" data-value="insp_py" />
+                        <input class="text-input" type="text" data-value="insp_pz" />
+                    </div>
+                    <div class="field-row">
+                        <span class="field-label">Rot</span>
+                        <input class="text-input" type="text" data-value="insp_rx" />
+                        <input class="text-input" type="text" data-value="insp_ry" />
+                        <input class="text-input" type="text" data-value="insp_rz" />
+                    </div>
+                    <div class="field-row">
+                        <span class="field-label">Scale</span>
+                        <input class="text-input" type="text" data-value="insp_sx" />
+                        <input class="text-input" type="text" data-value="insp_sy" />
+                        <input class="text-input" type="text" data-value="insp_sz" />
+                    </div>
+                    <button class="toolbar-btn small primary" data-event-click="apply_inspector_transform">Apply Transform</button>
+                </div>
+                <div id="inspector-components"></div>
             </div>
         </div>
     </div>
 
+    <!-- Bottom Status Bar -->
     <div id="status-bar">
         <div>{{ status_message }}</div>
         <div class="spacer"></div>

@@ -66,3 +66,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# .NET RipperBridge build artifacts
+tools/*/bin/
+tools/*/obj/
