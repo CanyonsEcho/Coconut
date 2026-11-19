@@ -201,6 +201,12 @@ set(COCONUT_CORE_SOURCES
     src/decompiler/DecompilerEngine.cpp
     src/scene/SceneDocument.cpp
     src/scene/GizmoMath.cpp
+    src/export/AssetRipperClient.cpp
+    src/export/UnityProjectExporter.cpp
+    src/fixup/MeshDecombiner.cpp
+    src/fixup/PrefabReconstructor.cpp
+    src/fixup/BuildErrorFixer.cpp
+    src/fixup/ProjectFixupPipeline.cpp
 )
 
 if(WIN32)

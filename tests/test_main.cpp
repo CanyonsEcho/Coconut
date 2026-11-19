@@ -18,6 +18,7 @@
 #include "decompiler/DecompilerEngine.h"
 #include "scene/SceneDocument.h"
 #include "scene/GizmoMath.h"
+#include "fixup/ProjectFixupPipeline.h"
 
 #include <cmath>
 #include <cstring>
@@ -388,6 +389,105 @@ void TestSceneEditingAndGizmos() {
     std::filesystem::remove_all(tmpDir, ec);
 }
 
+void TestUnityProjectExportAndFixupPipeline() {
+    auto tmpRoot = std::filesystem::temp_directory_path() / "coconut_test_fixup";
+    auto gameDir = tmpRoot / "GameBuild";
+    auto exportDir = tmpRoot / "ExportedUnity6Project";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpRoot, ec);
+
+    Expect(unity::SampleGameGenerator::GenerateMonoDemoGame(gameDir).IsOk(), "Generate demo for export+fixup");
+    auto loadRes = unity::GameLoader::Load(gameDir);
+    Expect(loadRes.IsOk(), "Load demo for export+fixup");
+
+    if (loadRes) {
+        auto& proj = loadRes.Value();
+        assets::AssetManager assets;
+        assets.IndexProject(proj);
+
+        decompiler::DecompilerEngine decomp;
+        Expect(decomp.AnalyzeProject(proj).IsOk(), "AnalyzeProject for export");
+
+        scene::SceneDocument sceneDoc;
+        Expect(sceneDoc.LoadFromProject(proj, assets).IsOk(), "LoadScene for export");
+
+        // 1. Run full Export + Fixup pipeline targeting Unity 6 (6000.0.23f1)
+        fixup::FixupPipelineOptions opts;
+        opts.targetUnityVersion = "6000.0.23f1";
+        opts.preferAssetRipper = false; // Exercise built-in native exporter + all 3 fixup passes
+        opts.runMeshDecombiner = true;
+        opts.runPrefabReconstructor = true;
+        opts.runBuildErrorFixer = true;
+
+        auto pipeRes = fixup::ProjectFixupPipeline::ExportAndFixup(
+            proj, assets, decomp, sceneDoc, nullptr, exportDir, opts);
+        Expect(pipeRes.IsOk(), "ProjectFixupPipeline::ExportAndFixup succeeded");
+
+        if (pipeRes) {
+            const auto& r = pipeRes.Value();
+            Expect(r.exportReport.scenesExported == 1, "Exported 1 .unity scene");
+            Expect(r.exportReport.scriptsExported == 3, "Exported 3 decompiled C# scripts");
+            Expect(r.exportReport.texturesExported >= 2, "Exported textures PNG");
+            Expect(r.exportReport.meshesExported >= 6, "Exported meshes OBJ");
+            Expect(r.exportReport.materialsExported >= 5, "Exported materials .mat");
+            Expect(r.exportReport.audioExported >= 1, "Exported audio WAV");
+
+            // Verify MeshDecombiner split StaticPillar_A and StaticPillar_B from Combined Mesh!
+            Expect(r.meshDecombine.combinedMeshesFound >= 1, "MeshDecombiner detected Combined Mesh");
+            Expect(r.meshDecombine.meshesSplit == 2, "MeshDecombiner split 2 static-batched pillars into local-space meshes");
+            Expect(r.meshDecombine.sceneReferencesRewired == 2, "MeshDecombiner rewired 2 scene MeshFilter references");
+            Expect(std::filesystem::exists(exportDir / "Assets" / "Meshes" / "Decombined" / "StaticPillar_A_Decombined.obj"), "StaticPillar_A_Decombined.obj written");
+
+            // Verify PrefabReconstructor detected the 3 repeated SupplyCrate hierarchies!
+            Expect(r.prefabReconstruct.prefabsCreated >= 1, "PrefabReconstructor created SupplyCrate.prefab");
+            Expect(r.prefabReconstruct.sceneInstancesLinked >= 3, "PrefabReconstructor linked 3 PrefabInstance blocks");
+            Expect(std::filesystem::exists(exportDir / "Assets" / "Prefabs" / "Reconstructed" / "SupplyCrate.prefab"), "SupplyCrate.prefab exists");
+
+            // Verify COCONUT_FIXUP_REPORT.md + ProjectVersion.txt
+            Expect(std::filesystem::exists(exportDir / "COCONUT_FIXUP_REPORT.md"), "COCONUT_FIXUP_REPORT.md generated");
+            auto verTxt = platform::ReadFileText(exportDir / "ProjectSettings" / "ProjectVersion.txt");
+            Expect(verTxt.IsOk() && verTxt.Value().find("6000.0.23f1") != std::string::npos, "Target Unity version 6000.0.23f1 written");
+        }
+
+        // 2. Inject real broken scripts/shaders & verify BuildErrorFixer repairs ALL of them automatically!
+        platform::WriteFileText(exportDir / "Assets" / "Scripts" / "EmbeddedAttribute.cs", "class EmbeddedAttribute {}");
+        platform::WriteFileText(exportDir / "Assets" / "Scripts" / "LegacyBroken.cs",
+            "using TMPro;\nusing UnityEngine.InputSystem;\npublic class LegacyBroken : MonoBehaviour {\n"
+            "  private int <Score>k__BackingField;\n"
+            "  public unsafe void Tick() {\n"
+            "    var p = FindObjectOfType<Camera>();\n"
+            "    Application.LoadLevel(\"Main\");\n"
+            "    var w = new WWW(\"http://example.com\");\n"
+            "  }\n}\n");
+        platform::WriteFileText(exportDir / "Assets" / "Broken.shader", "Hidden/InternalErrorShader");
+
+        auto fixRes = fixup::BuildErrorFixer::RunOnProject(exportDir, "6000.0.23f1");
+        Expect(fixRes.IsOk(), "BuildErrorFixer ran on injected broken files");
+        if (fixRes) {
+            const auto& bf = fixRes.Value();
+            Expect(!std::filesystem::exists(exportDir / "Assets" / "Scripts" / "EmbeddedAttribute.cs"), "Stripped EmbeddedAttribute.cs");
+            Expect(bf.invalidIdentifiersFixed >= 1, "Fixed <Score>k__BackingField identifier");
+            Expect(bf.unityApiMigrations >= 3, "Migrated FindObjectOfType + Application.LoadLevel + WWW pragma");
+            Expect(bf.shadersRepaired >= 1, "Repaired Broken.shader");
+            Expect(bf.cscUnsafeGenerated, "Generated Assets/csc.rsp for unsafe code");
+            Expect(std::filesystem::exists(exportDir / "Assets" / "csc.rsp"), "Assets/csc.rsp exists on disk");
+
+            auto fixedCs = platform::ReadFileText(exportDir / "Assets" / "Scripts" / "LegacyBroken.cs");
+            Expect(fixedCs.IsOk() &&
+                       fixedCs.Value().find("_Score_BackingField") != std::string::npos &&
+                       fixedCs.Value().find("FindFirstObjectByType<Camera>") != std::string::npos &&
+                       fixedCs.Value().find("SceneManager.LoadScene") != std::string::npos,
+                   "Repaired C# script contents verified");
+
+            auto manTxt = platform::ReadFileText(exportDir / "Packages" / "manifest.json");
+            Expect(manTxt.IsOk() && manTxt.Value().find("com.unity.inputsystem") != std::string::npos,
+                   "Auto-added com.unity.inputsystem to Packages/manifest.json");
+        }
+    }
+
+    std::filesystem::remove_all(tmpRoot, ec);
+}
+
 } // namespace
 
 int main() {
@@ -398,6 +498,7 @@ int main() {
     TestUnityParsersAndDemoGames();
     TestMonoAndIl2CppDecompiler();
     TestSceneEditingAndGizmos();
+    TestUnityProjectExportAndFixupPipeline();
 
     std::cout << "Coconut Core Tests: " << g_passed << " passed, " << g_failed << " failed.\n";
     return g_failed == 0 ? 0 : 1;
