@@ -194,6 +194,11 @@ set(COCONUT_CORE_SOURCES
     src/assets/AudioAsset.cpp
     src/assets/MaterialAsset.cpp
     src/assets/AssetManager.cpp
+    src/decompiler/MonoAssembly.cpp
+    src/decompiler/CilDecompiler.cpp
+    src/decompiler/Il2CppMetadata.cpp
+    src/decompiler/NativeDisassembler.cpp
+    src/decompiler/DecompilerEngine.cpp
 )
 
 if(WIN32)

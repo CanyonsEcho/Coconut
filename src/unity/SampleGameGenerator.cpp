@@ -938,8 +938,8 @@ ByteBuffer SampleGameGenerator::BuildSampleManagedAssemblyDll() {
     tilde.WriteU16(0); tilde.WriteU16(1); tilde.WriteU16(sParamBase);
     tilde.WriteU16(0); tilde.WriteU16(2); tilde.WriteU16(sParamCombo);
 
-    // 0x0A MemberRef: Class(2: TypeRef tag=1 -> (3<<2)|1 = Debug), Name(2), Signature(2)
-    tilde.WriteU16((3 << 2) | 1); tilde.WriteU16(sLog); tilde.WriteU16(sigStatVoidStr);
+    // 0x0A MemberRef: Class(2: MemberRefParent 3-bit tag, TypeRef=1 -> (3<<3)|1 = Debug), Name(2), Signature(2)
+    tilde.WriteU16((3 << 3) | 1); tilde.WriteU16(sLog); tilde.WriteU16(sigStatVoidStr);
 
     // 0x20 Assembly: HashAlgId(4), Ver(8), Flags(4), PublicKey(2), Name(2), Culture(2)
     tilde.WriteU32(0x8004); tilde.WriteU16(1); tilde.WriteU16(0); tilde.WriteU16(0); tilde.WriteU16(0);
@@ -1024,7 +1024,7 @@ ByteBuffer SampleGameGenerator::BuildSampleManagedAssemblyDll() {
     pe.WriteZeros(0x80 - pe.Size());
 
     // PE Signature + COFF File Header
-    pe.WriteFixedString("PE\0\0");
+    pe.WriteU32(0x00004550u); // "PE\0\0"
     pe.WriteU16(0x014C); // Machine: I386
     pe.WriteU16(1);      // NumberOfSections
     pe.WriteU32(0);      // TimeDateStamp
@@ -1067,7 +1067,7 @@ ByteBuffer SampleGameGenerator::BuildSampleManagedAssemblyDll() {
     }
 
     // Section Header: .text (40 bytes)
-    pe.WriteFixedString(".text\0\0\0");
+    pe.WriteFixedString(std::string_view(".text\0\0\0", 8));
     pe.WriteU32(static_cast<u32>(textBytes.size())); // VirtualSize
     pe.WriteU32(kTextRva);                           // VirtualAddress
     pe.WriteU32(static_cast<u32>(textBytes.size())); // SizeOfRawData

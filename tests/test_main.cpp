@@ -15,6 +15,7 @@
 #include "assets/AudioAsset.h"
 #include "assets/MaterialAsset.h"
 #include "assets/AssetManager.h"
+#include "decompiler/DecompilerEngine.h"
 
 #include <cmath>
 #include <cstring>
@@ -241,6 +242,81 @@ void TestUnityParsersAndDemoGames() {
     std::filesystem::remove(tmpApk, ec);
 }
 
+void TestMonoAndIl2CppDecompiler() {
+    auto tmpDir = std::filesystem::temp_directory_path() / "coconut_test_decomp";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+
+    // 1. Test Mono PE/CLI Decompiler & Ghidra-style XRefs + Renaming
+    Expect(unity::SampleGameGenerator::GenerateMonoDemoGame(tmpDir).IsOk(), "Generate Mono game for decompiler");
+    auto monoLoad = unity::GameLoader::Load(tmpDir);
+    Expect(monoLoad.IsOk(), "Load Mono game for decompiler");
+
+    if (monoLoad) {
+        ProjectDatabase db;
+        db.SetSymbolRename("CoconutDemo.PlayerController::TakeDamage", "ApplyPlayerDamage");
+        db.SetComment("CoconutDemo.PlayerController::TakeDamage@IL_0000", "Subtracted health from incoming hit");
+
+        decompiler::DecompilerEngine engine;
+        Expect(engine.AnalyzeProject(monoLoad.Value(), &db).IsOk(), "DecompilerEngine::AnalyzeProject (Mono)");
+        Expect(engine.Symbols().size() == 3, "Found 3 Mono user classes (PlayerController, EnemySentinel, ScoreCalculator)");
+        Expect(!engine.AllXRefs().empty(), "Extracted CIL XRefs");
+
+        auto hits = engine.SearchSymbols("PlayerController");
+        Expect(hits.size() == 1, "SearchSymbols PlayerController");
+        if (!hits.empty()) {
+            auto view = engine.InspectSymbol(hits[0], &db);
+            Expect(view.decompiledCSharp.find("class PlayerController : MonoBehaviour") != std::string::npos, "Decompiled class header");
+            Expect(view.decompiledCSharp.find("ApplyPlayerDamage(int amount)") != std::string::npos, "Applied .coco Ghidra symbol rename");
+            Expect(view.decompiledCSharp.find("this.health = (this.health - amount);") != std::string::npos, "Decompiled structured C# arithmetic");
+            Expect(view.decompiledCSharp.find("if ((this.health <= 0))") != std::string::npos ||
+                   view.decompiledCSharp.find("if (this.health <= 0)") != std::string::npos, "Decompiled structured C# if-block");
+            Expect(view.disassemblyListing.find("ldfld") != std::string::npos &&
+                   view.disassemblyListing.find("Subtracted health from incoming hit") != std::string::npos, "Disassembly listing + comment");
+        }
+
+        auto scoreHits = engine.SearchSymbols("ScoreCalculator");
+        Expect(scoreHits.size() == 1, "SearchSymbols ScoreCalculator");
+        if (!scoreHits.empty()) {
+            auto view = engine.InspectSymbol(scoreHits[0], &db);
+            Expect(view.decompiledCSharp.find("return ((baseScore * comboMultiplier) + 100);") != std::string::npos, "Decompiled ScoreCalculator return expr");
+        }
+
+        auto debugXRefs = engine.FindXRefsTo("Debug.Log");
+        Expect(debugXRefs.size() >= 3, "Found 3+ XRefs to Debug.Log");
+
+        auto scriptsOut = tmpDir / "exported_scripts";
+        auto expRes = engine.ExportAllScripts(scriptsOut, &db);
+        Expect(expRes.IsOk() && expRes.Value() == 3, "ExportAllScripts wrote 3 .cs files");
+        Expect(engine.ExportGhidraScriptJson(tmpDir / "script.json").IsOk(), "ExportGhidraScriptJson");
+    }
+
+    // 2. Test IL2CPP global-metadata.dat + ARM64 ELF64 Disassembler
+    auto tmpApk = tmpDir / "mobile_il2cpp.apk";
+    Expect(unity::SampleGameGenerator::GenerateIl2CppDemoApk(tmpApk).IsOk(), "Generate IL2CPP APK for decompiler");
+    auto apkLoad = unity::GameLoader::Load(tmpApk);
+    Expect(apkLoad.IsOk(), "Load IL2CPP APK for decompiler");
+    if (apkLoad) {
+        decompiler::DecompilerEngine ilEngine;
+        Expect(ilEngine.AnalyzeProject(apkLoad.Value()).IsOk(), "DecompilerEngine::AnalyzeProject (IL2CPP)");
+        Expect(ilEngine.Symbols().size() == 2, "Found 2 IL2CPP classes (TouchPlayerController, BossGuardianAI)");
+        if (!ilEngine.Symbols().empty()) {
+            auto view = ilEngine.InspectSymbol(0);
+            Expect(view.decompiledCSharp.find("class TouchPlayerController") != std::string::npos, "IL2CPP C# stub");
+            Expect(view.disassemblyListing.find("stp fp, lr") != std::string::npos &&
+                   view.disassemblyListing.find("ret") != std::string::npos, "ARM64 ELF64 disassembly listing");
+        }
+        Expect(ilEngine.ExportDumpCS(tmpDir / "dump.cs").IsOk(), "IL2CPP ExportDumpCS");
+    }
+
+    // 3. Test x86-64 disassembler directly
+    ByteBuffer x64Sample = {0x55, 0x48, 0x89, 0xE5, 0x48, 0x83, 0xEC, 0x20, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0x5D, 0xC3};
+    auto x64Insns = decompiler::NativeDisassembler::DisassembleX86_64(x64Sample, 0x140001000ULL);
+    Expect(x64Insns.size() >= 6 && x64Insns[0].mnemonic == "push" && x64Insns.back().mnemonic == "ret", "x86-64 disassembly");
+
+    std::filesystem::remove_all(tmpDir, ec);
+}
+
 } // namespace
 
 int main() {
@@ -249,6 +325,7 @@ int main() {
     TestCompressionAndZip();
     TestCommandHistoryAndProjectDb();
     TestUnityParsersAndDemoGames();
+    TestMonoAndIl2CppDecompiler();
 
     std::cout << "Coconut Core Tests: " << g_passed << " passed, " << g_failed << " failed.\n";
     return g_failed == 0 ? 0 : 1;
