@@ -42,7 +42,8 @@ public:
         const unity::ObjectInfo& obj,
         const unity::LoadedGameProject* project = nullptr);
 
-    // Export MeshData to standard Wavefront .OBJ or glTF 2.0 (.gltf embedded JSON)
+    // Export MeshData to FBX 7.4 ASCII (.fbx), Wavefront .OBJ, or glTF 2.0 (.gltf embedded JSON)
+    static Result<void> ExportFBX(const MeshData& mesh, const std::filesystem::path& fbxPath);
     static Result<void> ExportOBJ(const MeshData& mesh, const std::filesystem::path& objPath);
     static Result<void> ExportGLTF(const MeshData& mesh, const std::filesystem::path& gltfPath);
 

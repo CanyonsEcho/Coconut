@@ -19,10 +19,14 @@
 namespace coconut::fixup {
 
 struct FixupPipelineOptions {
-    std::string targetUnityVersion = "2022.3.15f1";
-    bool preferAssetRipper = true;
-    std::filesystem::path assetRipperExePath;
-    u16 assetRipperPort = 52890;
+    std::string targetUnityVersion = "Match Source";
+    std::string meshFormat = "fbx";      // "fbx" | "glb" | "obj" | "native"
+    std::string audioFormat = "wav";     // "wav" | "mp3" | "m4a" | "ogg" | "native"
+    std::string imageFormat = "png";     // "png" | "tga" | "dds"
+    std::string scriptMode = "hybrid";   // "decompiled" | "hybrid" | "stubs"
+
+    bool useInternalAssetRipper = true;
+    std::filesystem::path internalRipperExePath;
 
     bool runMeshDecombiner = true;
     bool runPrefabReconstructor = true;
@@ -31,7 +35,8 @@ struct FixupPipelineOptions {
 
 struct FixupPipelineReport {
     std::filesystem::path outputProjectDir;
-    std::string backendUsed; // "AssetRipper" or "Coconut Native Exporter"
+    std::string backendUsed; // "Coconut Internal AssetRipper Core (1.3.14 Fork)" or "Coconut Native Exporter"
+    std::string resolvedUnityVersion;
     exporter::UnityExportReport exportReport;
     MeshDecombineResult meshDecombine;
     PrefabReconstructResult prefabReconstruct;
@@ -41,7 +46,7 @@ struct FixupPipelineReport {
 
 class ProjectFixupPipeline {
 public:
-    // Full one-click Decompile -> Export Unity Project (via AssetRipper or native) -> Fixup Pipeline
+    // Full one-click Decompile -> Export Unity Project (Internal Forked AssetRipper or Native C++) -> Fixup Pipeline
     static Result<FixupPipelineReport> ExportAndFixup(
         unity::LoadedGameProject& project,
         assets::AssetManager& assets,

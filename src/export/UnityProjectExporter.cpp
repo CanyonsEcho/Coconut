@@ -83,7 +83,7 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
     std::function<void(const std::string&)> onLog) {
     UnityExportReport report;
     report.projectDir = outputDir;
-    report.unityVersion = options.targetUnityVersion.empty()
+    report.unityVersion = (options.targetUnityVersion.empty() || options.targetUnityVersion == "Match Source")
                               ? (project.unityVersion.IsValid() ? project.unityVersion.ToString() : "2022.3.15f1")
                               : options.targetUnityVersion;
 
@@ -119,17 +119,23 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
     std::unordered_map<i64, std::string> meshGuidMap;
     std::unordered_map<i64, std::string> matGuidMap;
 
-    // 1. Export Textures (.png + .meta)
+    // 1. Export Textures (.png / .tga / .dds + .meta)
     if (options.exportTextures) {
+        std::string imgExt = (options.imageFormat == "tga") ? ".tga"
+                           : (options.imageFormat == "dds") ? ".dds"
+                                                            : ".png";
         for (size_t i = 0; i < assets.Entries().size(); ++i) {
             const auto& e = assets.Entries()[i];
             if (e.classId != static_cast<i32>(unity::ClassID::Texture2D)) continue;
             auto tRes = assets.GetTexture(i);
             if (!tRes || !tRes.Value()->IsValid()) continue;
 
-            std::string fname = CleanAssetFileName(tRes.Value()->name) + "_" + std::to_string(e.pathId) + ".png";
+            std::string fname = CleanAssetFileName(tRes.Value()->name) + "_" + std::to_string(e.pathId) + imgExt;
             auto dst = texturesDir / fname;
-            if (assets::TextureCodec::ExportPNG(*tRes.Value(), dst)) {
+            Result<void> writeRes = (options.imageFormat == "tga")   ? assets::TextureCodec::ExportTGA(*tRes.Value(), dst)
+                                  : (options.imageFormat == "dds")   ? assets::TextureCodec::ExportDDS(*tRes.Value(), dst)
+                                                                     : assets::TextureCodec::ExportPNG(*tRes.Value(), dst);
+            if (writeRes) {
                 std::string guid = DeterministicGuid("tex:" + std::to_string(e.pathId));
                 texGuidMap[e.pathId] = guid;
                 if (options.generateMetaFiles) {
@@ -139,20 +145,26 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
                 ++report.texturesExported;
             }
         }
-        log("Exported " + std::to_string(report.texturesExported) + " textures");
+        log("Exported " + std::to_string(report.texturesExported) + " textures (" + imgExt + ")");
     }
 
-    // 2. Export Meshes (.obj + .meta)
+    // 2. Export Meshes (.fbx / .gltf / .obj + .meta)
     if (options.exportMeshes) {
+        std::string meshExt = (options.meshFormat == "obj")  ? ".obj"
+                            : (options.meshFormat == "gltf" || options.meshFormat == "glb") ? ".gltf"
+                                                                                          : ".fbx";
         for (size_t i = 0; i < assets.Entries().size(); ++i) {
             const auto& e = assets.Entries()[i];
             if (e.classId != static_cast<i32>(unity::ClassID::Mesh)) continue;
             auto mRes = assets.GetMesh(i);
             if (!mRes || !mRes.Value()->IsValid()) continue;
 
-            std::string fname = CleanAssetFileName(mRes.Value()->name) + "_" + std::to_string(e.pathId) + ".obj";
+            std::string fname = CleanAssetFileName(mRes.Value()->name) + "_" + std::to_string(e.pathId) + meshExt;
             auto dst = meshesDir / fname;
-            if (assets::MeshCodec::ExportOBJ(*mRes.Value(), dst)) {
+            Result<void> writeRes = (meshExt == ".obj")  ? assets::MeshCodec::ExportOBJ(*mRes.Value(), dst)
+                                  : (meshExt == ".gltf") ? assets::MeshCodec::ExportGLTF(*mRes.Value(), dst)
+                                                         : assets::MeshCodec::ExportFBX(*mRes.Value(), dst);
+            if (writeRes) {
                 std::string guid = DeterministicGuid("mesh:" + std::to_string(e.pathId));
                 meshGuidMap[e.pathId] = guid;
                 if (options.generateMetaFiles) {
@@ -162,7 +174,7 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
                 ++report.meshesExported;
             }
         }
-        log("Exported " + std::to_string(report.meshesExported) + " meshes");
+        log("Exported " + std::to_string(report.meshesExported) + " meshes (" + meshExt + ")");
     }
 
     // 3. Export Materials (.mat YAML + .meta)
@@ -201,17 +213,25 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
         log("Exported " + std::to_string(report.materialsExported) + " materials");
     }
 
-    // 4. Export AudioClips (.wav + .meta)
+    // 4. Export AudioClips (.wav / .mp3 / .m4a / .ogg + .meta)
     if (options.exportAudio) {
+        std::string audExt = (options.audioFormat == "mp3") ? ".mp3"
+                           : (options.audioFormat == "m4a") ? ".m4a"
+                           : (options.audioFormat == "raw" || options.audioFormat == "ogg") ? ".ogg"
+                                                                                            : ".wav";
         for (size_t i = 0; i < assets.Entries().size(); ++i) {
             const auto& e = assets.Entries()[i];
             if (e.classId != static_cast<i32>(unity::ClassID::AudioClip)) continue;
             auto aRes = assets.GetAudio(i);
             if (!aRes || aRes.Value()->rawAudio.empty()) continue;
 
-            std::string fname = CleanAssetFileName(aRes.Value()->name) + "_" + std::to_string(e.pathId) + ".wav";
+            std::string fname = CleanAssetFileName(aRes.Value()->name) + "_" + std::to_string(e.pathId) + audExt;
             auto dst = audioDir / fname;
-            if (assets::AudioCodec::ExportWAV(*aRes.Value(), dst)) {
+            Result<void> writeRes = (audExt == ".mp3") ? assets::AudioCodec::ExportMP3(*aRes.Value(), dst)
+                                  : (audExt == ".m4a") ? assets::AudioCodec::ExportM4A(*aRes.Value(), dst)
+                                  : (audExt == ".ogg") ? assets::AudioCodec::ExportRawOrOgg(*aRes.Value(), dst)
+                                                       : assets::AudioCodec::ExportWAV(*aRes.Value(), dst);
+            if (writeRes) {
                 if (options.generateMetaFiles) {
                     WriteMetaFile(dst, DeterministicGuid("audio:" + std::to_string(e.pathId)), "AudioImporter");
                     ++report.metaFilesGenerated;
@@ -219,6 +239,7 @@ Result<UnityExportReport> UnityProjectExporter::ExportProject(
                 ++report.audioExported;
             }
         }
+        log("Exported " + std::to_string(report.audioExported) + " audio clips (" + audExt + ")");
     }
 
     // 5. Export TextAssets

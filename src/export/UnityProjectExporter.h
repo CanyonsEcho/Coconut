@@ -14,7 +14,10 @@
 namespace coconut::exporter {
 
 struct UnityExportOptions {
-    std::string targetUnityVersion = "2022.3.15f1"; // Any Unity version: 5.6 .. 2022.3 LTS .. 6000.x
+    std::string targetUnityVersion = "Match Source"; // "Match Source" or any Unity version: 5.6 .. 2022.3 LTS .. 6000.x
+    std::string meshFormat = "fbx";                  // "fbx" | "gltf" | "obj"
+    std::string audioFormat = "wav";                 // "wav" | "mp3" | "m4a" | "raw"
+    std::string imageFormat = "png";                 // "png" | "tga" | "dds"
     bool exportScenes = true;
     bool exportScripts = true;
     bool exportMeshes = true;

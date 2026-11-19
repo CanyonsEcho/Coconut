@@ -4,45 +4,52 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace coconut::exporter {
 
 struct AssetRipperConfig {
-    std::filesystem::path executablePath; // Optional path to AssetRipper.GUI.Free(.exe) or Coconut.RipperBridge
-    std::string host = "127.0.0.1";
-    u16 port = 52890;
-    std::string targetUnityVersion = "2022.3.15f1";
-    std::string scriptContentLevel = "Level2"; // Level0..Level2
-    std::string meshExportFormat = "Native";
-    std::string audioExportFormat = "Default";
-    std::string imageExportFormat = "Png";
-    bool useRipperBridge = false;
+    std::filesystem::path executablePath; // Optional override for internal Coconut.RipperCore(.exe)
+    std::string targetUnityVersion = "Match Source";
+    std::string scriptExportMode = "hybrid";   // decompiled | hybrid | dll | stubs
+    std::string meshExportFormat = "fbx";      // fbx | glb | obj | native
+    std::string audioExportFormat = "wav";     // wav | mp3 | m4a | ogg | native
+    std::string imageExportFormat = "png";     // png | tga | bmp | jpg | exr
+    bool decombineMeshes = true;
+    bool reconstructPrefabs = true;
+    bool fixBuildErrors = true;
     bool autoFallbackToNative = true;
 };
 
 struct AssetRipperRunResult {
-    bool usedAssetRipper = false;
+    bool usedInternalRipper = false;
     bool usedNativeFallback = false;
     std::filesystem::path exportedProjectDir;
+    std::string sourceUnityVersion;
+    std::string targetUnityVersion;
+    size_t scenesExported = 0;
+    size_t scriptsExported = 0;
+    size_t meshesExported = 0;
+    size_t audioExported = 0;
+    size_t texturesExported = 0;
+    size_t meshesDecombined = 0;
+    size_t prefabsReconstructed = 0;
+    size_t buildErrorsFixed = 0;
+    size_t shadersFixed = 0;
     std::string summary;
     std::vector<std::string> logs;
 };
 
-// Integrates with https://github.com/AssetRipper/AssetRipper via:
-//   1. AssetRipper headless HTTP API (AssetRipper.GUI.Free --headless --port <port> -> /LoadFolder, /Settings/Update, /Export/UnityProject)
-//   2. Optional Coconut.RipperBridge .NET 10 CLI companion
-//   3. Built-in native C++ UnityProjectExporter fallback so export always succeeds!
+// Drives Coconut's internal AssetRipper 1.3.14 fork (internal/Coconut.RipperCore)
+// with custom static-mesh separation, prefab reconstruction, FBX/OBJ/GLB/M4A exporters,
+// target Unity version retargeting, and automated build-error fixups.
 class AssetRipperClient {
 public:
-    // Auto-discover installed AssetRipper or Coconut.RipperBridge binaries in PATH / standard locations
-    static std::optional<std::filesystem::path> DetectAssetRipperBinary();
-    static std::optional<std::filesystem::path> DetectRipperBridgeBinary();
+    // Auto-discover internal Coconut.RipperCore executable or DLL
+    static std::optional<std::filesystem::path> DetectInternalRipperCore();
 
-    // Check if an AssetRipper headless HTTP server is already responding on host:port
-    static bool PingServer(const std::string& host, u16 port);
-
-    // Execute export using AssetRipper (HTTP API or RipperBridge)
-    static Result<AssetRipperRunResult> ExportViaAssetRipper(
+    // Execute full export + fixup via internal Coconut.RipperCore
+    static Result<AssetRipperRunResult> ExportViaInternalRipper(
         const std::filesystem::path& gameInputPath,
         const std::filesystem::path& outputProjectDir,
         const AssetRipperConfig& config,

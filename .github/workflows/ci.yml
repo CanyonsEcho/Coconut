@@ -52,32 +52,15 @@ jobs:
       - name: Run Unit & Integration Tests
         run: ctest --test-dir build --output-on-failure
 
-  android-build:
-    name: Build Android (NDK arm64-v8a)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - name: Configure Android NDK CMake (arm64-v8a)
-        run: |
-          cmake -B build-android -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_LATEST_HOME}/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
-            -DANDROID_STL=c++_shared \
-            -DCOCONUT_BUILD_TESTS=OFF \
-            -DCOCONUT_BUILD_GUI=ON
-      - name: Build libcoconut.so (arm64-v8a)
-        run: cmake --build build-android --parallel
-
-  ripper-bridge:
-    name: Build .NET Coconut.RipperBridge
+  internal-ripper-core:
+    name: Build Internal AssetRipper Fork (Coconut.RipperCore, .NET 10)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Build RipperBridge
-        run: dotnet build tools/Coconut.RipperBridge/Coconut.RipperBridge.csproj -c Release
+      - name: Build Coconut.RipperCore
+        run: dotnet build internal/Coconut.RipperCore/Coconut.RipperCore.csproj -c Release
+      - name: Smoke Test Coconut.RipperCore CLI
+        run: dotnet internal/Coconut.RipperCore/bin/Release/net10.0/Coconut.RipperCore.dll --version

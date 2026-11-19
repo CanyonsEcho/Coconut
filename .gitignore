@@ -67,6 +67,9 @@ vcpkg_installed/
 Testing/
 .cache/
 
-# .NET RipperBridge build artifacts
+# Internal forked AssetRipper & Coconut.RipperCore build outputs
+internal/AssetRipper/Source/0Bins/
+internal/**/bin/
+internal/**/obj/
 tools/*/bin/
 tools/*/obj/

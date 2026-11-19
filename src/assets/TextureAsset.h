@@ -70,8 +70,10 @@ public:
     static void ApplyTint(Texture2DData& tex, f32 rMul, f32 gMul, f32 bMul);
     static void ConvertGrayscale(Texture2DData& tex);
 
-    // Export / Import PNG
+    // Export PNG, TGA, DDS & Import PNG
     static Result<void> ExportPNG(const Texture2DData& tex, const std::filesystem::path& pngPath);
+    static Result<void> ExportTGA(const Texture2DData& tex, const std::filesystem::path& tgaPath);
+    static Result<void> ExportDDS(const Texture2DData& tex, const std::filesystem::path& ddsPath);
     static Result<Texture2DData> ImportPNG(const std::filesystem::path& pngPath, const std::string& name = {});
 
     // Write modified RGBA32 texture back into a Unity SerializedFile object

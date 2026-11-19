@@ -401,6 +401,125 @@ Result<void> MeshCodec::ExportGLTF(const MeshData& mesh, const std::filesystem::
     return platform::WriteFileText(gltfPath, j.dump(2));
 }
 
+Result<void> MeshCodec::ExportFBX(const MeshData& mesh, const std::filesystem::path& fbxPath) {
+    if (!mesh.IsValid()) return Result<void>::Err("Cannot export empty mesh to FBX");
+
+    std::string safeName = mesh.name.empty() ? "Mesh" : mesh.name;
+    for (char& c : safeName) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
+    }
+
+    std::vector<i32> polyIdx;
+    polyIdx.reserve(mesh.indices.size());
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        i32 a = static_cast<i32>(mesh.indices[i]);
+        i32 b = static_cast<i32>(mesh.indices[i + 1]);
+        i32 c = static_cast<i32>(mesh.indices[i + 2]);
+        if (a < static_cast<i32>(mesh.positions.size()) &&
+            b < static_cast<i32>(mesh.positions.size()) &&
+            c < static_cast<i32>(mesh.positions.size())) {
+            polyIdx.push_back(a);
+            polyIdx.push_back(c);
+            polyIdx.push_back(-(b + 1)); // FBX polygon closing index
+        }
+    }
+    if (polyIdx.empty()) return Result<void>::Err("Mesh has no valid triangles for FBX export");
+
+    const bool hasNormals = mesh.normals.size() == mesh.positions.size();
+    const bool hasUvs = mesh.uvs.size() == mesh.positions.size();
+
+    std::ostringstream oss;
+    oss << "; FBX 7.4.0 project file\n"
+        << "; Exported by Coconut Decompiler\n"
+        << "FBXHeaderExtension:  {\n"
+        << "\tFBXHeaderVersion: 1003\n"
+        << "\tFBXVersion: 7400\n"
+        << "\tCreator: \"Coconut Decompiler\"\n"
+        << "}\n"
+        << "GlobalSettings:  {\n"
+        << "\tVersion: 1000\n"
+        << "\tProperties70:  {\n"
+        << "\t\tP: \"UpAxis\", \"int\", \"Integer\", \"\",1\n"
+        << "\t\tP: \"UpAxisSign\", \"int\", \"Integer\", \"\",1\n"
+        << "\t\tP: \"FrontAxis\", \"int\", \"Integer\", \"\",2\n"
+        << "\t\tP: \"FrontAxisSign\", \"int\", \"Integer\", \"\",1\n"
+        << "\t\tP: \"CoordAxis\", \"int\", \"Integer\", \"\",0\n"
+        << "\t\tP: \"CoordAxisSign\", \"int\", \"Integer\", \"\",1\n"
+        << "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",100\n"
+        << "\t}\n"
+        << "}\n"
+        << "Objects:  {\n"
+        << "\tGeometry: 100001, \"Geometry::" << safeName << "\", \"Mesh\" {\n"
+        << "\t\tVertices: *" << (mesh.positions.size() * 3) << " {\n"
+        << "\t\t\ta: ";
+    for (size_t i = 0; i < mesh.positions.size(); ++i) {
+        if (i > 0) oss << ',';
+        const auto& v = mesh.positions[i];
+        oss << -v.x << ',' << v.y << ',' << v.z;
+    }
+    oss << "\n\t\t}\n"
+        << "\t\tPolygonVertexIndex: *" << polyIdx.size() << " {\n"
+        << "\t\t\ta: ";
+    for (size_t i = 0; i < polyIdx.size(); ++i) {
+        if (i > 0) oss << ',';
+        oss << polyIdx[i];
+    }
+    oss << "\n\t\t}\n";
+
+    if (hasNormals) {
+        oss << "\t\tLayerElementNormal: 0 {\n"
+            << "\t\t\tVersion: 101\n"
+            << "\t\t\tName: \"\"\n"
+            << "\t\t\tMappingInformationType: \"ByVertice\"\n"
+            << "\t\t\tReferenceInformationType: \"Direct\"\n"
+            << "\t\t\tNormals: *" << (mesh.normals.size() * 3) << " {\n"
+            << "\t\t\t\ta: ";
+        for (size_t i = 0; i < mesh.normals.size(); ++i) {
+            if (i > 0) oss << ',';
+            const auto& n = mesh.normals[i];
+            oss << -n.x << ',' << n.y << ',' << n.z;
+        }
+        oss << "\n\t\t\t}\n\t\t}\n";
+    }
+
+    if (hasUvs) {
+        oss << "\t\tLayerElementUV: 0 {\n"
+            << "\t\t\tVersion: 101\n"
+            << "\t\t\tName: \"UVMap\"\n"
+            << "\t\t\tMappingInformationType: \"ByVertice\"\n"
+            << "\t\t\tReferenceInformationType: \"Direct\"\n"
+            << "\t\t\tUV: *" << (mesh.uvs.size() * 2) << " {\n"
+            << "\t\t\t\ta: ";
+        for (size_t i = 0; i < mesh.uvs.size(); ++i) {
+            if (i > 0) oss << ',';
+            const auto& uv = mesh.uvs[i];
+            oss << uv.x << ',' << uv.y;
+        }
+        oss << "\n\t\t\t}\n\t\t}\n";
+    }
+
+    oss << "\t\tLayer: 0 {\n\t\t\tVersion: 100\n";
+    if (hasNormals) {
+        oss << "\t\t\tLayerElement:  {\n\t\t\t\tType: \"LayerElementNormal\"\n\t\t\t\tTypedIndex: 0\n\t\t\t}\n";
+    }
+    if (hasUvs) {
+        oss << "\t\t\tLayerElement:  {\n\t\t\t\tType: \"LayerElementUV\"\n\t\t\t\tTypedIndex: 0\n\t\t\t}\n";
+    }
+    oss << "\t\t}\n\t}\n"
+        << "\tModel: 200001, \"Model::" << safeName << "\", \"Mesh\" {\n"
+        << "\t\tVersion: 232\n"
+        << "\t\tShading: T\n"
+        << "\t\tCulling: \"CullingOff\"\n"
+        << "\t}\n"
+        << "}\n"
+        << "Connections:  {\n"
+        << "\tC: \"OO\",200001,0\n"
+        << "\tC: \"OO\",100001,200001\n"
+        << "}\n";
+
+    return platform::WriteFileText(fbxPath, oss.str());
+}
+
 MeshData MeshCodec::CreateBox(const std::string& name, glm::vec3 size) {
     MeshData m;
     m.name = name;

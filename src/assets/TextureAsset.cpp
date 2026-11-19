@@ -1,6 +1,7 @@
 #include "assets/TextureAsset.h"
 #include "core/BinaryReader.h"
 #include "core/BinaryWriter.h"
+#include "platform/Platform.h"
 
 #include <stb_image.h>
 #include <stb_image_write.h>
@@ -537,6 +538,55 @@ Result<void> TextureCodec::ExportPNG(const Texture2DData& tex, const std::filesy
         tex.rgbaPixels.data(), tex.width * 4);
     if (!ok) return Result<void>::Err("stbi_write_png failed: " + pngPath.string());
     return Result<void>::Ok();
+}
+
+Result<void> TextureCodec::ExportTGA(const Texture2DData& tex, const std::filesystem::path& tgaPath) {
+    if (!tex.IsValid()) return Result<void>::Err("Cannot export empty texture");
+    if (tgaPath.has_parent_path()) {
+        std::error_code ec;
+        std::filesystem::create_directories(tgaPath.parent_path(), ec);
+    }
+    int ok = stbi_write_tga(
+        tgaPath.string().c_str(), tex.width, tex.height, 4,
+        tex.rgbaPixels.data());
+    if (!ok) return Result<void>::Err("stbi_write_tga failed: " + tgaPath.string());
+    return Result<void>::Ok();
+}
+
+Result<void> TextureCodec::ExportDDS(const Texture2DData& tex, const std::filesystem::path& ddsPath) {
+    if (!tex.IsValid()) return Result<void>::Err("Cannot export empty texture");
+
+    BinaryWriter w(Endian::Little);
+    // DDS magic ("DDS ") + 124-byte DDS_HEADER (uncompressed R8G8B8A8)
+    w.WriteFixedString("DDS ");
+    w.WriteU32(124); // dwSize
+    w.WriteU32(0x1 | 0x2 | 0x4 | 0x1000 | 0x8); // CAPS | HEIGHT | WIDTH | PIXELFORMAT | PITCH
+    w.WriteU32(static_cast<u32>(tex.height));
+    w.WriteU32(static_cast<u32>(tex.width));
+    w.WriteU32(static_cast<u32>(tex.width) * 4); // dwPitchOrLinearSize
+    w.WriteU32(0); // dwDepth
+    w.WriteU32(1); // dwMipMapCount
+    for (int i = 0; i < 11; ++i) w.WriteU32(0); // dwReserved1[11]
+
+    // DDS_PIXELFORMAT (32 bytes)
+    w.WriteU32(32);            // dwSize
+    w.WriteU32(0x40 | 0x1);    // DDPF_RGB | DDPF_ALPHAPIXELS
+    w.WriteU32(0);             // dwFourCC
+    w.WriteU32(32);            // dwRGBBitCount
+    w.WriteU32(0x000000FFu);   // R mask
+    w.WriteU32(0x0000FF00u);   // G mask
+    w.WriteU32(0x00FF0000u);   // B mask
+    w.WriteU32(0xFF000000u);   // A mask
+
+    // Caps
+    w.WriteU32(0x1000); // DDSCAPS_TEXTURE
+    w.WriteU32(0);
+    w.WriteU32(0);
+    w.WriteU32(0);
+    w.WriteU32(0); // dwReserved2
+
+    w.WriteBytes(tex.rgbaPixels);
+    return platform::WriteFileBytes(ddsPath, w.Buffer());
 }
 
 Result<Texture2DData> TextureCodec::ImportPNG(const std::filesystem::path& pngPath, const std::string& name) {

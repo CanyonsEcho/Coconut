@@ -6,8 +6,8 @@ if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
 endif()
 
 project(Coconut
-    VERSION 0.1.0
-    DESCRIPTION "Coconut — Cross-Platform Unity Mono/IL2CPP Decompiler, Scene/Asset Editor & Project Fixup Suite"
+    VERSION 0.2.0
+    DESCRIPTION "Coconut — Desktop Unity Mono/IL2CPP Decompiler, Scene/Bundle Editor, Project Exporter & Game Rebuilder"
     LANGUAGES C CXX
 )
 
@@ -17,11 +17,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(COCONUT_BUILD_TESTS "Build Coconut unit and integration tests" ON)
-option(COCONUT_BUILD_GUI "Build Coconut RmlUi + SDL3 graphical application" ON)
-
-if(ANDROID)
-    set(COCONUT_BUILD_TESTS OFF CACHE BOOL "Disable host tests on Android cross-build" FORCE)
-endif()
+option(COCONUT_BUILD_GUI "Build Coconut RmlUi + SDL3 desktop graphical application" ON)
+option(COCONUT_BUILD_INTERNAL_RIPPER "Build internal forked AssetRipper (.NET 10 Coconut.RipperCore) when dotnet is available" ON)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
@@ -41,7 +38,7 @@ set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glm)
 
-# 2. nlohmann/json (JSON for .coco DB, AssetRipper API, manifest.json, script.json)
+# 2. nlohmann/json (JSON for ProjectManager, .coco DB, manifest.json, script.json, RipperCore reports)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -69,7 +66,7 @@ add_library(coconut_lz4 STATIC
 )
 target_include_directories(coconut_lz4 PUBLIC ${lz4_src_SOURCE_DIR}/lib)
 
-# 4. miniz (Zlib/Deflate + full ZIP/APK archive reader & writer)
+# 4. miniz (Zlib/Deflate + full ZIP/APK archive reader & writer for Android game builds)
 FetchContent_Declare(
     miniz_src
     GIT_REPOSITORY https://github.com/richgel999/miniz.git
@@ -80,7 +77,6 @@ FetchContent_GetProperties(miniz_src)
 if(NOT miniz_src_POPULATED)
     FetchContent_Populate(miniz_src)
 endif()
-# Generate miniz_export.h for static build
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/miniz_export.h" "#pragma once\n#define MINIZ_EXPORT\n")
 add_library(coconut_miniz STATIC
     ${miniz_src_SOURCE_DIR}/miniz.c
@@ -110,8 +106,39 @@ endif()
 add_library(coconut_stb INTERFACE)
 target_include_directories(coconut_stb INTERFACE ${stb_src_SOURCE_DIR})
 
+# 6. shine (Portable fixed-point C MPEG-1/2 Layer III encoder for native MP3 audio export)
+FetchContent_Declare(
+    shine_src
+    GIT_REPOSITORY https://github.com/toots/shine.git
+    GIT_TAG        3.1.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(shine_src)
+if(NOT shine_src_POPULATED)
+    FetchContent_Populate(shine_src)
+endif()
+add_library(coconut_shine STATIC
+    ${shine_src_SOURCE_DIR}/src/lib/bitstream.c
+    ${shine_src_SOURCE_DIR}/src/lib/huffman.c
+    ${shine_src_SOURCE_DIR}/src/lib/l3bitstream.c
+    ${shine_src_SOURCE_DIR}/src/lib/l3loop.c
+    ${shine_src_SOURCE_DIR}/src/lib/l3mdct.c
+    ${shine_src_SOURCE_DIR}/src/lib/l3subband.c
+    ${shine_src_SOURCE_DIR}/src/lib/layer3.c
+    ${shine_src_SOURCE_DIR}/src/lib/reservoir.c
+    ${shine_src_SOURCE_DIR}/src/lib/tables.c
+)
+target_include_directories(coconut_shine PUBLIC ${shine_src_SOURCE_DIR}/src/lib)
+if(MSVC)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/shine_msvc_compat.h" "#pragma once\n#define __attribute__(x)\n")
+    target_compile_options(coconut_shine PRIVATE /W0 "/FI${CMAKE_CURRENT_BINARY_DIR}/generated/shine_msvc_compat.h")
+    target_compile_definitions(coconut_shine PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(coconut_shine PRIVATE -w)
+endif()
+
 if(COCONUT_BUILD_GUI)
-    # 6. SDL3 (Cross-platform windowing, input, OpenGL/GLES3, Android support)
+    # 7. SDL3 (Desktop windowing & OpenGL 3.3 Core for Windows, macOS, and Linux)
     FetchContent_Declare(
         SDL3
         GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
@@ -124,13 +151,9 @@ if(COCONUT_BUILD_GUI)
     set(SDL_TESTS OFF CACHE BOOL "" FORCE)
     set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-    if(ANDROID)
-        set(SDL_SHARED ON CACHE BOOL "" FORCE)
-        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-    endif()
     FetchContent_MakeAvailable(SDL3)
 
-    # 7. FreeType (Required by RmlUi for crisp UI & code typography)
+    # 8. FreeType (Required by RmlUi for crisp modern sans-serif typography)
     FetchContent_Declare(
         freetype
         GIT_REPOSITORY https://github.com/freetype/freetype.git
@@ -145,7 +168,6 @@ if(COCONUT_BUILD_GUI)
     set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(freetype)
 
-    # Alias Freetype::Freetype so RmlUi's find_package(Freetype) sees our fetched FreeType
     if(TARGET freetype AND NOT TARGET Freetype::Freetype)
         add_library(Freetype::Freetype ALIAS freetype)
     endif()
@@ -153,7 +175,7 @@ if(COCONUT_BUILD_GUI)
     set(FREETYPE_INCLUDE_DIRS "${freetype_SOURCE_DIR}/include" CACHE PATH "" FORCE)
     set(FREETYPE_LIBRARIES freetype CACHE STRING "" FORCE)
 
-    # 8. RmlUi 6.3 (HTML/CSS-inspired C++ UI Engine)
+    # 9. RmlUi 6.3 (HTML/CSS-inspired C++ UI Engine)
     FetchContent_Declare(
         RmlUi
         GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
@@ -172,7 +194,7 @@ if(COCONUT_BUILD_GUI)
 endif()
 
 # -----------------------------------------------------------------------------
-# Coconut Core Static Library (Headless Engine — Zero GUI Dependencies)
+# Coconut Core Static Library (Headless Engine — Supports Android/Win/Linux/Mac Unity Games)
 # -----------------------------------------------------------------------------
 set(COCONUT_CORE_SOURCES
     src/core/Logger.cpp
@@ -182,12 +204,12 @@ set(COCONUT_CORE_SOURCES
     src/core/Compression.cpp
     src/core/CommandHistory.cpp
     src/core/ProjectDatabase.cpp
+    src/core/ProjectManager.cpp
     src/unity/ClassIDs.cpp
     src/unity/UnityFS.cpp
     src/unity/TypeTree.cpp
     src/unity/SerializedFile.cpp
     src/unity/GameLoader.cpp
-    src/unity/SampleGameGenerator.cpp
     src/assets/StbImpl.cpp
     src/assets/TextureAsset.cpp
     src/assets/MeshAsset.cpp
@@ -203,6 +225,7 @@ set(COCONUT_CORE_SOURCES
     src/scene/GizmoMath.cpp
     src/export/AssetRipperClient.cpp
     src/export/UnityProjectExporter.cpp
+    src/export/GameRebuilder.cpp
     src/fixup/MeshDecombiner.cpp
     src/fixup/PrefabReconstructor.cpp
     src/fixup/BuildErrorFixer.cpp
@@ -211,8 +234,6 @@ set(COCONUT_CORE_SOURCES
 
 if(WIN32)
     list(APPEND COCONUT_CORE_SOURCES src/platform/Platform_Win32.cpp)
-elseif(ANDROID)
-    list(APPEND COCONUT_CORE_SOURCES src/platform/Platform_Android.cpp)
 elseif(APPLE)
     list(APPEND COCONUT_CORE_SOURCES src/platform/Platform_MacOS.mm)
 else()
@@ -231,6 +252,7 @@ target_link_libraries(coconut_core PUBLIC
     coconut_lz4
     coconut_miniz
     coconut_stb
+    coconut_shine
 )
 
 if(WIN32)
@@ -241,9 +263,6 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         COCONUT_PLATFORM_WINDOWS=1
     )
-elseif(ANDROID)
-    target_link_libraries(coconut_core PUBLIC log android)
-    target_compile_definitions(coconut_core PUBLIC COCONUT_PLATFORM_ANDROID=1)
 elseif(APPLE)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
@@ -261,7 +280,23 @@ else()
 endif()
 
 # -----------------------------------------------------------------------------
-# Coconut GUI Application (SDL3 + OpenGL 3.3 / GLES3 + RmlUi 6.3)
+# Internal Forked AssetRipper Engine (Coconut.RipperCore, .NET 10)
+# -----------------------------------------------------------------------------
+if(COCONUT_BUILD_INTERNAL_RIPPER)
+    find_program(DOTNET_EXECUTABLE dotnet)
+    if(DOTNET_EXECUTABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/internal/Coconut.RipperCore/Coconut.RipperCore.csproj")
+        add_custom_target(coconut_ripper_core
+            COMMAND "${DOTNET_EXECUTABLE}" build
+                "${CMAKE_CURRENT_SOURCE_DIR}/internal/Coconut.RipperCore/Coconut.RipperCore.csproj"
+                -c Release --nologo
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            COMMENT "Building internal forked AssetRipper engine (Coconut.RipperCore)"
+        )
+    endif()
+endif()
+
+# -----------------------------------------------------------------------------
+# Coconut Desktop GUI Application (Windows, macOS, Linux — SDL3 + OpenGL 3.3 + RmlUi 6.3)
 # -----------------------------------------------------------------------------
 if(COCONUT_BUILD_GUI)
     set(RMLUI_BACKENDS_DIR "${rmlui_SOURCE_DIR}/Backends")
@@ -276,9 +311,7 @@ if(COCONUT_BUILD_GUI)
         ${RMLUI_BACKENDS_DIR}/RmlUi_Renderer_GL3.cpp
     )
 
-    if(ANDROID)
-        add_library(coconut SHARED ${COCONUT_GUI_SOURCES})
-    elseif(APPLE)
+    if(APPLE)
         add_executable(coconut MACOSX_BUNDLE ${COCONUT_GUI_SOURCES})
         set_target_properties(coconut PROPERTIES
             MACOSX_BUNDLE_BUNDLE_NAME "Coconut"
@@ -299,42 +332,26 @@ if(COCONUT_BUILD_GUI)
         COCONUT_VERSION="${PROJECT_VERSION}"
     )
 
-    if(ANDROID)
-        target_compile_definitions(coconut PRIVATE RMLUI_GL3_CUSTOM_LOADER=<GLES3/gl3.h> COCONUT_USE_GLES3=1)
-        target_link_libraries(coconut PRIVATE
-            coconut_core
-            RmlUi::Core
-            RmlUi::Debugger
-            SDL3::SDL3
-            GLESv3
-            EGL
-            android
-            log
-        )
-    else()
-        # RmlUi ships gl3w/glad in its GL3 backend; on desktop link OpenGL + RmlUi GL3 backend
-        find_package(OpenGL REQUIRED)
-        # Check if RmlUi ships GLAD2 inside Dependencies/gl3w or Backends/RmlUi_GL3
-        if(EXISTS "${rmlui_SOURCE_DIR}/Dependencies/gl3w/gl3w.c")
-            target_sources(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/gl3w/gl3w.c")
-            target_include_directories(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/gl3w")
-        elseif(EXISTS "${rmlui_SOURCE_DIR}/Dependencies/glad/src/gl.c")
-            target_sources(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/glad/src/gl.c")
-            target_include_directories(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/glad/include")
-            target_compile_definitions(coconut PRIVATE RMLUI_GL3_CUSTOM_LOADER=<glad/gl.h>)
-        elseif(EXISTS "${RMLUI_BACKENDS_DIR}/RmlUi_GL3/glad.c")
-            target_sources(coconut PRIVATE "${RMLUI_BACKENDS_DIR}/RmlUi_GL3/glad.c")
-            target_include_directories(coconut PRIVATE "${RMLUI_BACKENDS_DIR}/RmlUi_GL3")
-        endif()
-
-        target_link_libraries(coconut PRIVATE
-            coconut_core
-            RmlUi::Core
-            RmlUi::Debugger
-            SDL3::SDL3-static
-            OpenGL::GL
-        )
+    find_package(OpenGL REQUIRED)
+    if(EXISTS "${rmlui_SOURCE_DIR}/Dependencies/gl3w/gl3w.c")
+        target_sources(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/gl3w/gl3w.c")
+        target_include_directories(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/gl3w")
+    elseif(EXISTS "${rmlui_SOURCE_DIR}/Dependencies/glad/src/gl.c")
+        target_sources(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/glad/src/gl.c")
+        target_include_directories(coconut PRIVATE "${rmlui_SOURCE_DIR}/Dependencies/glad/include")
+        target_compile_definitions(coconut PRIVATE RMLUI_GL3_CUSTOM_LOADER=<glad/gl.h>)
+    elseif(EXISTS "${RMLUI_BACKENDS_DIR}/RmlUi_GL3/glad.c")
+        target_sources(coconut PRIVATE "${RMLUI_BACKENDS_DIR}/RmlUi_GL3/glad.c")
+        target_include_directories(coconut PRIVATE "${RMLUI_BACKENDS_DIR}/RmlUi_GL3")
     endif()
+
+    target_link_libraries(coconut PRIVATE
+        coconut_core
+        RmlUi::Core
+        RmlUi::Debugger
+        SDL3::SDL3-static
+        OpenGL::GL
+    )
 
     if(MSVC)
         target_compile_options(coconut PRIVATE /W3 /utf-8)
@@ -343,25 +360,24 @@ if(COCONUT_BUILD_GUI)
         )
     endif()
 
-    # Copy resources (UI RML/RCSS + Fonts) next to executable
-    if(NOT ANDROID)
-        add_custom_command(TARGET coconut POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/resources"
-                "$<TARGET_FILE_DIR:coconut>/resources"
-            COMMENT "Copying Coconut UI resources and fonts"
-        )
-    endif()
+    add_custom_command(TARGET coconut POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+            "$<TARGET_FILE_DIR:coconut>/resources"
+        COMMENT "Copying Coconut UI resources and fonts"
+    )
 endif()
 
 # -----------------------------------------------------------------------------
-# Unit & Integration Tests
+# Unit & Integration Tests (Synthetic fixtures live strictly inside tests/)
 # -----------------------------------------------------------------------------
 if(COCONUT_BUILD_TESTS)
     enable_testing()
     add_executable(coconut_tests
         tests/test_main.cpp
+        tests/TestFixtures.cpp
     )
+    target_include_directories(coconut_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(coconut_tests PRIVATE coconut_core)
     if(MSVC)
         target_compile_options(coconut_tests PRIVATE /W4 /utf-8)

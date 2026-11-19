@@ -3,13 +3,14 @@
 #include "core/Compression.h"
 #include "core/CommandHistory.h"
 #include "core/ProjectDatabase.h"
+#include "core/ProjectManager.h"
 #include "core/Types.h"
 #include "platform/Platform.h"
 #include "unity/ClassIDs.h"
 #include "unity/UnityFS.h"
 #include "unity/SerializedFile.h"
 #include "unity/GameLoader.h"
-#include "unity/SampleGameGenerator.h"
+#include "TestFixtures.h"
 #include "assets/TextureAsset.h"
 #include "assets/MeshAsset.h"
 #include "assets/AudioAsset.h"
@@ -18,6 +19,8 @@
 #include "decompiler/DecompilerEngine.h"
 #include "scene/SceneDocument.h"
 #include "scene/GizmoMath.h"
+#include "export/GameRebuilder.h"
+#include "export/AssetRipperClient.h"
 #include "fixup/ProjectFixupPipeline.h"
 
 #include <cmath>
@@ -414,7 +417,10 @@ void TestUnityProjectExportAndFixupPipeline() {
         // 1. Run full Export + Fixup pipeline targeting Unity 6 (6000.0.23f1)
         fixup::FixupPipelineOptions opts;
         opts.targetUnityVersion = "6000.0.23f1";
-        opts.preferAssetRipper = false; // Exercise built-in native exporter + all 3 fixup passes
+        opts.meshFormat = "fbx";
+        opts.audioFormat = "m4a";
+        opts.imageFormat = "png";
+        opts.useInternalAssetRipper = false; // Exercise built-in native exporter + all 3 fixup passes
         opts.runMeshDecombiner = true;
         opts.runPrefabReconstructor = true;
         opts.runBuildErrorFixer = true;
@@ -488,9 +494,161 @@ void TestUnityProjectExportAndFixupPipeline() {
     std::filesystem::remove_all(tmpRoot, ec);
 }
 
+void TestRichExportersGameRebuilderAndProjectManager() {
+    auto tmpRoot = std::filesystem::temp_directory_path() / "coconut_test_v02";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpRoot, ec);
+    std::filesystem::create_directories(tmpRoot, ec);
+
+    // 1. FBX 7.4 ASCII Mesh Export
+    auto box = assets::MeshCodec::CreateBox("TestCube", {2.0f, 2.0f, 2.0f});
+    auto fbxPath = tmpRoot / "TestCube.fbx";
+    Expect(assets::MeshCodec::ExportFBX(box, fbxPath).IsOk(), "MeshCodec::ExportFBX succeeded");
+    auto fbxText = platform::ReadFileText(fbxPath);
+    Expect(fbxText.IsOk() &&
+               fbxText.Value().find("FBXVersion: 7400") != std::string::npos &&
+               fbxText.Value().find("PolygonVertexIndex:") != std::string::npos &&
+               fbxText.Value().find("LayerElementNormal:") != std::string::npos &&
+               fbxText.Value().find("LayerElementUV:") != std::string::npos,
+           "Exported FBX 7.4 contains valid Geometry, Normals, UVs, and Connections");
+
+    // 2. MP3 & M4A Audio Exporters (shine MPEG-1 Layer III + ISO-BMFF ALAC)
+    auto clip = assets::AudioCodec::CreateSynthSineClip("LaserBeep", 880.0f, 0.35f, 44100);
+    auto mp3Path = tmpRoot / "LaserBeep.mp3";
+    auto m4aPath = tmpRoot / "LaserBeep.m4a";
+    Expect(assets::AudioCodec::ExportMP3(clip, mp3Path, 128).IsOk(), "AudioCodec::ExportMP3 succeeded");
+    auto mp3Bytes = platform::ReadFileBytes(mp3Path);
+    Expect(mp3Bytes.IsOk() && mp3Bytes.Value().size() > 1000 &&
+               mp3Bytes.Value()[0] == 0xFF && (mp3Bytes.Value()[1] & 0xE0) == 0xE0,
+           "Exported MP3 has valid MPEG frame sync bytes and encoded audio frames");
+
+    Expect(assets::AudioCodec::ExportM4A(clip, m4aPath).IsOk(), "AudioCodec::ExportM4A succeeded");
+    auto m4aBytes = platform::ReadFileBytes(m4aPath);
+    Expect(m4aBytes.IsOk() && m4aBytes.Value().size() > 2000 &&
+               std::memcmp(m4aBytes.Value().data() + 4, "ftypM4A ", 8) == 0,
+           "Exported M4A has valid ISO-BMFF ftyp M4A header and ALAC payload");
+
+    // 3. TGA & DDS Texture Exporters
+    assets::Texture2DData tex;
+    tex.name = "Checker";
+    tex.width = 16;
+    tex.height = 16;
+    tex.rgbaPixels.assign(16 * 16 * 4, 200);
+    auto tgaPath = tmpRoot / "Checker.tga";
+    auto ddsPath = tmpRoot / "Checker.dds";
+    Expect(assets::TextureCodec::ExportTGA(tex, tgaPath).IsOk(), "TextureCodec::ExportTGA succeeded");
+    Expect(assets::TextureCodec::ExportDDS(tex, ddsPath).IsOk(), "TextureCodec::ExportDDS succeeded");
+    auto ddsBytes = platform::ReadFileBytes(ddsPath);
+    Expect(ddsBytes.IsOk() && ddsBytes.Value().size() == 128 + 16 * 16 * 4 &&
+               std::memcmp(ddsBytes.Value().data(), "DDS ", 4) == 0,
+           "Exported DDS has exact 128-byte header + RGBA8 pixel payload");
+
+    // 4. GameRebuilder Desktop Build Round-Trip (edit Transform -> rebuild game -> reload & verify!)
+    auto srcGameDir = tmpRoot / "SrcDesktopGame";
+    auto patchedGameDir = tmpRoot / "PatchedDesktopGame";
+    Expect(unity::SampleGameGenerator::GenerateMonoDemoGame(srcGameDir).IsOk(), "Generate synthetic desktop fixture");
+    auto loadRes = unity::GameLoader::Load(srcGameDir);
+    Expect(loadRes.IsOk(), "Load synthetic desktop fixture");
+    if (loadRes) {
+        auto& proj = loadRes.Value();
+        assets::AssetManager assets;
+        assets.IndexProject(proj);
+        scene::SceneDocument sceneDoc;
+        Expect(sceneDoc.LoadFromProject(proj, assets).IsOk(), "Load scene for rebuild");
+
+        int towerIdx = sceneDoc.FindNodeByName("WatchTower");
+        Expect(towerIdx >= 0, "Found WatchTower before rebuild");
+        if (towerIdx >= 0) {
+            const auto& pn = sceneDoc.Nodes()[towerIdx];
+            sceneDoc.SetTransform(static_cast<size_t>(towerIdx), {77.0f, 12.5f, -44.0f}, pn.localEulerDeg, pn.localScale);
+        }
+
+        auto pending = exporter::GameRebuilder::CollectPendingChanges(proj, &sceneDoc);
+        Expect(!pending.empty(), "GameRebuilder detected pending Scene modifications");
+
+        exporter::GameRebuildOptions rebOpts;
+        rebOpts.outputPath = patchedGameDir;
+        auto rebRes = exporter::GameRebuilder::BuildPatchedGame(proj, &sceneDoc, rebOpts);
+        Expect(rebRes.IsOk(), "GameRebuilder rebuilt patched desktop Unity build");
+        if (rebRes) {
+            Expect(rebRes.Value().serializedFilesRebuilt >= 1, "Rebuilt >= 1 SerializedFile");
+            Expect(std::filesystem::exists(patchedGameDir / "COCONUT_BUILD_PATCH.json"), "Wrote COCONUT_BUILD_PATCH.json");
+
+            // Reload patched build and verify the modified WatchTower position persisted!
+            auto reloadRes = unity::GameLoader::Load(patchedGameDir);
+            Expect(reloadRes.IsOk(), "Reloaded patched desktop Unity build");
+            if (reloadRes) {
+                assets::AssetManager assets2;
+                assets2.IndexProject(reloadRes.Value());
+                scene::SceneDocument scene2;
+                Expect(scene2.LoadFromProject(reloadRes.Value(), assets2).IsOk(), "Reloaded scene from patched build");
+                int tower2Idx = scene2.FindNodeByName("WatchTower");
+                Expect(tower2Idx >= 0 &&
+                           std::fabs(scene2.Nodes()[tower2Idx].localPosition.x - 77.0f) < 0.01f &&
+                           std::fabs(scene2.Nodes()[tower2Idx].localPosition.z - (-44.0f)) < 0.01f,
+                       "Patched WatchTower Transform persisted cleanly inside rebuilt game binary!");
+            }
+        }
+    }
+
+    // 5. GameRebuilder Android APK Round-Trip
+    auto srcApk = tmpRoot / "SrcAndroid.apk";
+    auto patchedApk = tmpRoot / "PatchedAndroid.apk";
+    Expect(unity::SampleGameGenerator::GenerateIl2CppDemoApk(srcApk).IsOk(), "Generate synthetic Android APK fixture");
+    auto apkLoad = unity::GameLoader::Load(srcApk);
+    Expect(apkLoad.IsOk(), "Load synthetic Android APK");
+    if (apkLoad) {
+        auto& apkProj = apkLoad.Value();
+        // Patch first TextAsset/object dirty flag to test APK rebuild
+        if (!apkProj.serializedFiles.empty() && !apkProj.serializedFiles[0].objects.empty()) {
+            apkProj.serializedFiles[0].objects[0].dirty = true;
+        }
+        exporter::GameRebuildOptions apkOpts;
+        apkOpts.outputPath = patchedApk;
+        auto apkReb = exporter::GameRebuilder::BuildPatchedGame(apkProj, nullptr, apkOpts);
+        Expect(apkReb.IsOk(), "GameRebuilder rebuilt patched Android APK");
+        if (apkReb) {
+            Expect(apkReb.Value().requiresApkSigning, "Flagged APK as requiring zipalign + apksigner");
+            Expect(std::filesystem::exists(patchedApk), "Patched APK file exists on disk");
+            auto reloadApk = unity::GameLoader::Load(patchedApk);
+            Expect(reloadApk.IsOk() && reloadApk.Value().isApkArchive, "Reloaded rebuilt Android APK cleanly");
+        }
+    }
+
+    // 6. Ghidra-style ProjectManager persistence + BuildProbe
+    auto regPath = tmpRoot / "projects.json";
+    {
+        ProjectManager pm(regPath);
+        auto add1 = pm.AddProject("SpaceShooter_Win64", srcGameDir, "Main Windows build");
+        auto add2 = pm.AddProject("MobileClient_APK", srcApk, "Android IL2CPP build");
+        Expect(add1.IsOk() && add2.IsOk(), "ProjectManager added desktop + Android projects");
+        Expect(add2.Value().detectedPlatform == "Android" && add2.Value().detectedBackend == "IL2CPP",
+               "ProjectManager auto-detected Android IL2CPP from APK");
+        Expect(pm.RenameProject(add1.Value().id, "SpaceShooter_Patched"), "ProjectManager renamed project");
+    }
+    {
+        ProjectManager pm2(regPath);
+        Expect(pm2.Load().IsOk() && pm2.Projects().size() == 2, "ProjectManager persisted & reloaded 2 projects");
+        auto probe = ProjectManager::ProbeBuild(srcGameDir);
+        Expect(probe.valid && !probe.tree.empty(), "ProjectManager::ProbeBuild populated game build tree");
+    }
+
+    // 7. Internal forked AssetRipper (Coconut.RipperCore) discovery check
+    auto ripperBin = exporter::AssetRipperClient::DetectInternalRipperCore();
+    if (ripperBin) {
+        std::cout << "  [info] Internal AssetRipper Core discovered at: " << ripperBin->string() << "\n";
+    }
+
+    std::filesystem::remove_all(tmpRoot, ec);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc >= 3 && std::string_view(argv[1]) == "--emit-fixture") {
+        auto r = unity::SampleGameGenerator::GenerateMonoDemoGame(argv[2]);
+        return r.IsOk() ? 0 : 1;
+    }
     TestUnityVersion();
     TestBinaryReaderWriter();
     TestCompressionAndZip();
@@ -499,6 +657,7 @@ int main() {
     TestMonoAndIl2CppDecompiler();
     TestSceneEditingAndGizmos();
     TestUnityProjectExportAndFixupPipeline();
+    TestRichExportersGameRebuilderAndProjectManager();
 
     std::cout << "Coconut Core Tests: " << g_passed << " passed, " << g_failed << " failed.\n";
     return g_failed == 0 ? 0 : 1;

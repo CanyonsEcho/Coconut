@@ -11,7 +11,7 @@
 int main(int argc, char** argv) {
     std::filesystem::path screenshotPath;
     std::filesystem::path initialGamePath;
-    std::string initialTab = "scene";
+    std::string initialView = "manager"; // Ghidra-style Project Manager is the default landing window!
     bool runExportOnBoot = false;
     bool smokeExit = false;
 
@@ -20,8 +20,8 @@ int main(int argc, char** argv) {
         if (arg == "--capture-screenshot" && i + 1 < argc) {
             screenshotPath = argv[++i];
             smokeExit = true;
-        } else if (arg == "--tab" && i + 1 < argc) {
-            initialTab = argv[++i];
+        } else if ((arg == "--view" || arg == "--tab") && i + 1 < argc) {
+            initialView = argv[++i];
         } else if (arg == "--open" && i + 1 < argc) {
             initialGamePath = argv[++i];
         } else if (arg == "--run-export") {
@@ -35,14 +35,14 @@ int main(int argc, char** argv) {
     COCO_LOG_INFO("Boot", "Coconut " COCONUT_VERSION " starting (resources: " + resDir.string() + ")");
 
     coconut::ui::RmlBackend backend;
-    auto initRes = backend.Initialize("Coconut — Unity Mono/IL2CPP Decompiler & Editor", 1560, 920, resDir);
+    auto initRes = backend.Initialize("Coconut — Unity Mono/IL2CPP Decompiler, Editor & Game Rebuilder", 1560, 920, resDir);
     if (!initRes) {
         COCO_LOG_ERROR("Boot", initRes.Error());
         return 1;
     }
 
     coconut::ui::WorkbenchApp app;
-    auto appRes = app.Initialize(backend, resDir, initialGamePath, initialTab);
+    auto appRes = app.Initialize(backend, resDir, initialGamePath, initialView);
     if (!appRes) {
         COCO_LOG_ERROR("Boot", appRes.Error());
         return 1;
