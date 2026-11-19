@@ -1,0 +1,73 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (Ninja Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "COCONUT_BUILD_TESTS": "ON",
+        "COCONUT_BUILD_GUI": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "COCONUT_BUILD_TESTS": "ON",
+        "COCONUT_BUILD_GUI": "ON"
+      }
+    },
+    {
+      "name": "headless-tests",
+      "displayName": "Headless Core + Tests Only",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-headless",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "COCONUT_BUILD_TESTS": "ON",
+        "COCONUT_BUILD_GUI": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "headless-tests",
+      "configurePreset": "headless-tests"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "headless-tests",
+      "configurePreset": "headless-tests",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

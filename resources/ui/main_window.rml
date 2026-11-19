@@ -1,0 +1,80 @@
+<rml>
+<head>
+    <title>Coconut</title>
+    <link type="text/rcss" href="coconut.rcss" />
+</head>
+<body data-model="workbench">
+<div id="app-shell">
+    <div id="top-bar">
+        <div class="brand-mark">COCONUT</div>
+        <button class="toolbar-btn primary">Open Game</button>
+        <button class="toolbar-btn">Load Demo</button>
+        <button class="toolbar-btn">Export Unity Project</button>
+        <button class="toolbar-btn">Run Fixup</button>
+        <div class="spacer"></div>
+        <div class="badge badge-accent">{{ project_title }}</div>
+        <div class="badge">Unity {{ unity_version }}</div>
+        <div class="badge badge-cyan">{{ backend_name }}</div>
+        <div class="badge">{{ platform_name }}</div>
+    </div>
+
+    <div id="workspace">
+        <div id="left-dock" class="dock-panel">
+            <div class="tab-bar">
+                <div class="tab-btn" data-class-active="active_left_tab == 'hierarchy'" data-event-click="set_left_tab('hierarchy')">Hierarchy</div>
+                <div class="tab-btn" data-class-active="active_left_tab == 'symbols'" data-event-click="set_left_tab('symbols')">Symbols</div>
+            </div>
+            <div class="panel-body">
+                <div class="empty-state">
+                    Load a Unity Mono/IL2CPP game build or click Load Demo to inspect GameObjects, assemblies, and symbols.
+                </div>
+            </div>
+        </div>
+
+        <div id="center-column">
+            <div id="center-stage">
+                <div class="tab-bar">
+                    <div class="tab-btn" data-class-active="active_center_tab == 'scene'" data-event-click="set_center_tab('scene')">Scene View</div>
+                    <div class="tab-btn" data-class-active="active_center_tab == 'decompiler'" data-event-click="set_center_tab('decompiler')">Decompiler &amp; Listing</div>
+                    <div class="tab-btn" data-class-active="active_center_tab == 'asset'" data-event-click="set_center_tab('asset')">Asset Preview</div>
+                    <div class="tab-btn" data-class-active="active_center_tab == 'hex'" data-event-click="set_center_tab('hex')">Hex Editor</div>
+                    <div class="tab-btn" data-class-active="active_center_tab == 'export'" data-event-click="set_center_tab('export')">AssetRipper &amp; Fixup</div>
+                </div>
+                <div class="panel-body">
+                    <div class="empty-state">
+                        Coconut Workbench Ready — Scene Viewport, Ghidra-Style Mono/IL2CPP Decompiler, Hex Editor, and AssetRipper Fixup Pipeline.
+                    </div>
+                </div>
+            </div>
+
+            <div id="bottom-dock">
+                <div class="tab-bar">
+                    <div class="tab-btn" data-class-active="active_bottom_tab == 'assets'" data-event-click="set_bottom_tab('assets')">Project Assets</div>
+                    <div class="tab-btn" data-class-active="active_bottom_tab == 'xrefs'" data-event-click="set_bottom_tab('xrefs')">XRefs</div>
+                    <div class="tab-btn" data-class-active="active_bottom_tab == 'console'" data-event-click="set_bottom_tab('console')">Console</div>
+                </div>
+                <div class="panel-body">
+                    <div class="code-block" data-if="active_bottom_tab == 'console'">{{ console_text }}</div>
+                    <div class="empty-state" data-if="active_bottom_tab != 'console'">No project loaded yet.</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="right-dock" class="dock-panel">
+            <div class="tab-bar">
+                <div class="tab-btn active">Inspector</div>
+            </div>
+            <div class="panel-body">
+                <div class="empty-state">Select a GameObject, Asset, or Symbol to inspect and edit its properties.</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="status-bar">
+        <div>{{ status_message }}</div>
+        <div class="spacer"></div>
+        <div>FPS: {{ fps }}</div>
+    </div>
+</div>
+</body>
+</rml>
